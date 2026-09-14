@@ -203,9 +203,13 @@ class CodeReadingSession:
         definitions = [
             ("candidate_code_index", "Index allowed candidate source without executing it. Use read_candidate_code to inspect method bodies.",
              {"node_id": nullable_id}),
-            ("read_candidate_code", "Read numbered candidate source. Use symbol OR start_line/end_line. Continue with returned start_line/start_column; null uses defaults.",
-             {"node_id": nullable_id, "symbol": {"type": ["string", "null"]}, "start_line": nullable_int,
-              "end_line": nullable_int, "start_column": {"type": ["integer", "null"], "minimum": 0},
+            ("read_candidate_code", "Read numbered source using exactly one selector mode. Symbol mode: symbol='Class.method', start_line=null, end_line=null. Line/continuation mode: symbol=null, start_line=returned line, end_line=returned end. Never combine a non-null symbol with start_line or end_line. Copy the returned continuation object when resuming.",
+             {"node_id": nullable_id, "symbol": {"type": ["string", "null"],
+                  "description": "Exact indexed symbol, OR null for line-range/continuation mode. Non-null requires start_line and end_line both null."},
+              "start_line": {**nullable_int, "description": "One-based first line in line-range mode; must be null when symbol is non-null."},
+              "end_line": {**nullable_int, "description": "Inclusive last line in line-range mode; must be null when symbol is non-null."},
+              "start_column": {"type": ["integer", "null"], "minimum": 0,
+                               "description": "Zero-based character offset for resuming a long line; use returned continuation with symbol=null."},
               "max_lines": nullable_int}),
             ("diff_candidate_code", "Read actual source diff; default current candidate versus its direct parent. offset resumes diff lines; symbol optionally limits one function/class.",
              {"base_node_id": {"type": ["string", "null"]}, "target_node_id": nullable_id,
@@ -297,7 +301,7 @@ class CodeReadingSession:
     def _read(self, record, args, char_limit):
         symbol, start, end = args.get("symbol"), args.get("start_line"), args.get("end_line")
         if symbol is not None and (start is not None or end is not None):
-            raise ValueError("symbol and line range are mutually exclusive")
+            raise ValueError("symbol and line range are mutually exclusive: set start_line=null and end_line=null for a symbol read, or set symbol=null for a line-range/continuation read")
         if symbol is not None:
             matches = [s for s in record["index"].get("symbols", []) if s["symbol"] == symbol]
             if not matches:
@@ -438,6 +442,19 @@ class CodeReadingSession:
             result.setdefault("status", "ok")
         except (ValueError, TypeError, KeyError) as exc:
             result = {"status": "error", "reason": str(exc)}
+            if str(exc).startswith("symbol and line range are mutually exclusive"):
+                result.update(
+                    code="conflicting_code_selectors", location="read_candidate_code.arguments",
+                    received={key: args.get(key) for key in ("symbol", "start_line", "end_line")},
+                    expected="symbol with null line endpoints, OR null symbol with line endpoints",
+                    repair_hint="Choose the intended mode explicitly; for pagination copy the returned continuation, including symbol=null.",
+                    request_examples=[
+                        {"node_id": args.get("node_id"), "symbol": args.get("symbol"),
+                         "start_line": None, "end_line": None, "start_column": None, "max_lines": None},
+                        {"node_id": args.get("node_id"), "symbol": None,
+                         "start_line": args.get("start_line"), "end_line": args.get("end_line"),
+                         "start_column": args.get("start_column"), "max_lines": args.get("max_lines")},
+                    ])
         result["budget"] = {"calls_used": self.calls_used, "remaining_calls": self.options.max_calls - self.calls_used,
                             "remaining_chars": 0}
         # Normal source output is prebounded. If extensive metadata nevertheless

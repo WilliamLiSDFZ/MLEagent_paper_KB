@@ -18,7 +18,8 @@ from types import SimpleNamespace as NS
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine.analogy.code_tools import CodeReadingSession, CodeToolOptions
 from engine.analogy.context import (ContextOptions, clean_execution_output, context_options,
-                                    describe_plan, packet_from_search, resource_context)
+                                    describe_plan, packet_from_search, resource_context,
+                                    build_task_packet, runtime_evidence_paths)
 
 
 def node(node_id="current", code="LR = 0.1\ndef loss(x):\n    return x * 2\n", **kwargs):
@@ -181,7 +182,59 @@ class ContextTests(unittest.TestCase):
         self.assertIn("runtime_context.resources", packet.text)
         self.assertIn("resources", visible)
         self.assertGreater(visible["validation_trajectory"][0]["optimizer_steps"], 0)
+        paths = packet.metadata["runtime_evidence_paths"]
+        self.assertIn("validation_trajectory.0.optimizer_steps", paths)
+        self.assertNotIn("unreturned_detail.secret_evidence_marker", paths)
+        self.assertIn("validation_trajectory.0.optimizer_steps", packet.text)
         self.assertIn(current.id, packet.text)
+
+    def test_runtime_catalog_known_values_and_bounds(self):
+        facts = {"null": None, "unknown": "unknown", "blank": "", "nonfinite": float("nan"),
+                 "invalid.key": "not addressable", "invalid[0]": "not addressable",
+                 "zero": 0, "false": False, "series": [{"score": 0.9}, {"score": None}]}
+        self.assertEqual(runtime_evidence_paths(facts), ["zero", "false", "series.0.score"])
+        self.assertEqual(runtime_evidence_paths(facts, max_paths=2), ["zero", "false"])
+        self.assertEqual(runtime_evidence_paths(facts, max_chars=5), ["zero"])
+        self.assertEqual(runtime_evidence_paths(facts, max_chars=0), [])
+
+    def test_runtime_catalog_never_restores_hidden_packet_values(self):
+        current = node()
+        facts = {"selected_snapshot": {"snapshot_id": "visible-snapshot"},
+                 "hidden": {"omitted_runtime_evidence": "x" * 12000}}
+        packet = packet_from_search(agent(current, runtime_chars=2000, max_packet_chars=4000),
+                                    current, runtime_facts=facts)
+        self.assertLessEqual(len(packet.text), 4000)
+        self.assertNotIn("omitted_runtime_evidence", packet.text)
+        self.assertNotIn("hidden", packet.data["runtime_context"])
+        for path in packet.metadata["runtime_evidence_paths"]:
+            value = packet.data["runtime_context"]
+            for key in path.split("."):
+                value = value[int(key)] if isinstance(value, list) else value[key]
+            self.assertIsNotNone(value)
+        # Raw resource observations can be stored, but trimmed resource JSON is
+        # not available to evidence validation or the catalog, even for drafts.
+        draft = build_task_packet(task_desc="task", data_preview="data", pretrained="",
+                                  resources={"private_backend_marker": "x" * 7000},
+                                  options=ContextOptions(version=2))
+        self.assertEqual(draft.data["runtime_context"], {})
+        self.assertEqual(draft.metadata["runtime_evidence_paths"], [])
+
+    def test_conflicting_code_selector_returns_repair_shapes_without_reading(self):
+        current = node()
+        session = CodeReadingSession([current], current.id)
+        response = session.dispatch("read_candidate_code", {"symbol": "loss", "start_line": 2, "end_line": 3})
+        self.assertEqual(response["status"], "error")
+        self.assertEqual(response["code"], "conflicting_code_selectors")
+        self.assertEqual(response["received"], {"symbol": "loss", "start_line": 2, "end_line": 3})
+        self.assertEqual(session.anchors, [])
+        for request in response["request_examples"]:
+            fixed = session.dispatch("read_candidate_code", request)
+            self.assertEqual(fixed["status"], "ok")
+            self.assertIn("def loss", fixed["content"])
+        properties = next(tool["function"]["parameters"]["properties"] for tool in session.tools()
+                          if tool["function"]["name"] == "read_candidate_code")
+        self.assertIn("both null", properties["symbol"]["description"])
+        self.assertIn("must be null", properties["start_line"]["description"])
 
     def test_long_diff_line_paginates_and_parent_alias_resolves(self):
         parent = node("ancestor", code="X = '" + "a" * 20000 + "'\n")

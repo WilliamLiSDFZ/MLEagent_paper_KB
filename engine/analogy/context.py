@@ -44,6 +44,7 @@ class ContextOptions:
     endpoint_context_tokens: int = 262144
     input_safety_tokens: int = 8192
     final_report_reserve_tokens: int = 8192
+    report_reserve_turns: int = 2
 
     def __post_init__(self):
         if self.version not in (1, 2):
@@ -198,6 +199,56 @@ def _runtime_text(facts, max_chars):
     if omitted:
         result.append("Omitted runtime detail blocks: " + ", ".join(omitted))
     return "\n\n".join(result), visible, omitted
+
+
+def runtime_evidence_paths(runtime_context, max_paths=48, max_chars=3000):
+    """List bounded examples from the *visible* runtime object, never backend facts.
+
+    Array positions refer to the displayed list, including when only its latest
+    entries survived truncation. Keys containing path syntax are omitted rather
+    than inventing an escaping convention the report validator does not support.
+    This is a helpful subset, not a restriction on other valid visible paths.
+    """
+    paths, used = [], 0
+
+    def visit(value, path=""):
+        nonlocal used
+        if len(paths) >= max_paths or used >= max_chars:
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if isinstance(key, str) and re.fullmatch(r"[A-Za-z0-9_-]+", key):
+                    visit(item, f"{path}.{key}" if path else key)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, f"{path}.{index}")
+        elif (path and value is not None
+              and not (isinstance(value, str) and value.strip().lower() in {"", "unknown"})
+              and not (isinstance(value, float) and not math.isfinite(value))):
+            cost = len(path) + 1
+            if used + cost <= max_chars:
+                paths.append(path)
+                used += cost
+
+    if max_paths > 0 and max_chars > 0:
+        visit(runtime_context)
+    return paths
+
+
+def _attach_runtime_catalog(packet, options):
+    """Append reference examples only after every evidence section is finalized."""
+    prefix = ("\n## Visible runtime evidence path examples\n"
+              "Use one path per runtime_evidence array item, relative to runtime_context. "
+              "Use .0 for the first displayed array entry; do not join paths with semicolons. "
+              "These examples are a subset of visible facts, not proof of causation.\n")
+    room = min(3000, options.max_packet_chars - len(packet.text) - len(prefix))
+    paths = runtime_evidence_paths(packet.data.get("runtime_context", {}), max_chars=max(0, room))
+    if paths:
+        packet.text += prefix + "\n".join(paths) + "\n"
+    packet.metadata["runtime_evidence_paths"] = paths
+    packet.metadata["runtime_evidence_catalog_omitted"] = not paths
+    packet.metadata["returned_chars"] = len(packet.text)
+    return packet
 
 
 def _metric(node):
@@ -392,7 +443,7 @@ def packet_from_search(agent, parent_node, *, code_session=None, runtime_facts=N
                                               "runtime": len(_json(runtime_facts))}
     packet.metadata["log_cleanup"] = cleanup
     packet.metadata["allowed_nodes"] = data["allowed_nodes"]
-    return packet
+    return _attach_runtime_catalog(packet, options)
 
 
 def build_task_packet(*, task_desc, data_preview, resources, pretrained, options=None):
@@ -407,4 +458,4 @@ def build_task_packet(*, task_desc, data_preview, resources, pretrained, options
     ]
     packet = _assemble(sections, options, data)
     packet.data["runtime_context"] = {"resources": resources} if not packet.metadata["sections"]["resources"]["truncated"] else {}
-    return packet
+    return _attach_runtime_catalog(packet, options)

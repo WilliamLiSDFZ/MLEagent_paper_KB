@@ -25,6 +25,46 @@ without `analogy.context` retain v1; historical Job files have not been rewritte
 | Per-response output budget | 16,384 tokens |
 | Accumulated conversation input per request | at most 196,608 tokens |
 
+### Report delivery (2026-09-13, P0)
+
+Context v2 uses report schema revision 2 independently of the context version.
+Runtime observed facts now carry `runtime_evidence: ["path.one", "path.two"]`;
+`evidence` is a readable explanation. Paths resolve only against the actually
+displayed runtime object, with `.0` referring to the first displayed list item.
+The packet includes a bounded list of visible path examples. Historical unmarked
+reports remain readable; single paths, semicolon lists and numeric `[0]` syntax
+are deterministically normalized and recorded, with every reference checked.
+
+`analogy.context.report_reserve_turns=2` requires an initial submission by turn
+12 of the existing 14-turn limit. Correction may use one targeted read of known
+evidence, then must resubmit; new searches and opening additional papers are
+blocked during correction. Small turn limits scale the submission deadline.
+Near the input limit, submission begins earlier. The existing 8,192-token report
+reserve is multiplied by the initial submission plus up to two repair turns
+(24,576 tokens by default); this reduces optional reading room, not the input cap.
+It is a conservative reserve, not a guarantee about opaque response growth.
+
+Validation issues identify a field and repair action. Size hints appear only for
+size errors; feedback is bounded to 4,096 UTF-8 bytes, with full diagnostics saved
+outside the model conversation. Invalid shared facts block delivery. A mechanism
+with an invalid paper reference is removed whole, never silently downgraded from
+full-text to abstract evidence. Independently valid complete mechanisms can still
+be retained, with explicit partial-acceptance and original-index/ID mapping.
+
+`submission_attempts` in `.context.json` records original and normalized reports,
+issues, normalization actions, validation/rendering removals, final mechanism IDs
+and timing. The index includes first-submit turn, attempt count, correction outcome
+and final mechanism count. `delivery_status` distinguishes `accepted_complete`,
+`accepted_partial`, `abstained` and `failed`; `failure_kind` explains failures.
+The historical `ok=bool(report_md)` remains unchanged. Revision-2 abstention uses
+an empty mechanisms array with `abstention_reason`; old empty reports still work.
+
+No mechanism-state probes, candidate early-stop behavior, new node type, scoring,
+model or Job changes are included in P0. Targeted offline regressions are
+`utils/verify_analogy_report_delivery.py` and
+`utils/verify_analogy_submission_loop.py` alongside the existing context,
+observation, full-text, handoff and Responses checks.
+
 The conversation cap includes messages, tools, tool outputs and response items.
 It is also bounded by `endpoint_context_tokens` minus output and safety reserves.
 Token counting is conservative and its method is recorded; billed input tokens across

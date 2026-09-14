@@ -357,7 +357,11 @@ def _run(packet: str, args, mode: str, *, rendered=None, code_session=None) -> i
         Path(args.out).with_suffix(".context.json").write_text(json.dumps({
             "packet_metadata": rendered.metadata if rendered else None,
             "packet_data": rendered.data if rendered else None, "context": res.context,
-            "code_reads": res.code_reads, "model_calls": res.model_calls}, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            "code_reads": res.code_reads, "model_calls": res.model_calls,
+            "report": res.report, "report_md": res.report_md, "reason": res.reason,
+            "submission_attempts": res.submission_attempts,
+            "delivery_status": res.delivery_status, "failure_kind": res.failure_kind},
+            ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         Path(args.out).write_text(
             "# packet\n\n" + packet + "\n\n# trace\n\n" + "\n\n".join(res.trace) +
             "\n\n# report\n\n" + (res.report_md or f"(empty: {res.reason})") + "\n" +

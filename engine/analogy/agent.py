@@ -494,6 +494,9 @@ class AnalogyResult:
     context: Optional[dict] = None
     code_reads: Optional[dict] = None
     model_calls: List[dict] = field(default_factory=list)
+    submission_attempts: List[dict] = field(default_factory=list)
+    delivery_status: str = "not_recorded"  # legacy loop keeps its historical semantics
+    failure_kind: str = ""
 
 
 def _validate_evidence(m: dict, kept: List[str], reading: PaperReadingSession,
@@ -887,10 +890,21 @@ def _write_artifacts(log_dir: Path, parent_id: str, packet_md: str, res: Analogy
             context_path = trace_path.with_suffix(".context.json")
             context_path.write_text(json.dumps({"packet_md": packet_md, "context": res.context,
                 "code_reads": res.code_reads, "model_calls": res.model_calls,
-                "report": res.report, "report_md": res.report_md, "reason": res.reason},
+                "report": res.report, "report_md": res.report_md, "reason": res.reason,
+                "submission_attempts": res.submission_attempts,
+                "delivery_status": res.delivery_status, "failure_kind": res.failure_kind},
                 ensure_ascii=False, indent=2), encoding="utf-8")
             observation_metadata = {"context_version": res.context["version"],
-                                    "context_trace": context_path.name}
+                                    "context_trace": context_path.name,
+                                    "delivery_status": res.delivery_status,
+                                    "failure_kind": res.failure_kind,
+                                    "report_schema_revision": (res.report or {}).get("report_schema_revision"),
+                                    "first_submit_turn": (res.submission_attempts[0]["turn"]
+                                                          if res.submission_attempts else None),
+                                    "submission_count": len(res.submission_attempts),
+                                    "correction_succeeded": (len(res.submission_attempts) > 1 and
+                                        res.delivery_status in {"accepted_complete", "accepted_partial", "abstained"}),
+                                    "final_mechanism_count": len((res.report or {}).get("mechanisms", []))}
         line = {"parent_id": parent_id, "invocation": n, "trace": trace_path.name,
                 "ok": bool(res.report_md), "reason": res.reason, "turns": res.turns,
                 "n_queries": len(res.queries), "queries": res.queries,

@@ -21,9 +21,11 @@ Use candidate_code_index, read_candidate_code and diff_candidate_code when avail
 relevant source before claiming its loss, sampler, freezing, training or prediction is deficient.
 Code citations are {node_id, source_sha256, start_line, end_line}; cite only lines actually
 returned by the tools or the safe initial index. An indexed function range is not its full body.
-Separate observed_facts (statement/source/evidence/code_refs), hypotheses and unknowns.
-Runtime facts use source='runtime' and evidence as an exact dotted path relative to
-runtime_context in the packet; a path proves availability, not your causal interpretation.
+Separate observed_facts (statement/source/evidence/code_refs/runtime_evidence), hypotheses and unknowns.
+Submit report_schema_revision=2. Runtime facts use source='runtime' with runtime_evidence
+as an array of exact dotted paths relative to runtime_context in the packet. Put each path
+in a separate array element; list indices use .0, not [0]. evidence is a readable explanation.
+Use only visible values, not omitted fields. A path proves availability, not causal interpretation.
 Each mechanism needs implementation_basis, code_refs, runtime_evidence, source assumptions,
 target_fit, constraints to preserve, validation_plan and rejection_criterion. In improve mode,
 implementation_basis='code' requires read code_refs; 'runtime' requires available dotted
@@ -33,7 +35,7 @@ supports, checkpoint differences and resource uncertainty. A config time cap is 
 execution time after queuing. Never infer private test performance from public validation.
 Keep every mechanism complete and concise. The application assigns stable mechanism IDs.
 If the context or reading budget runs low, submit your best supported report, or an empty
-mechanisms list, instead of inventing missing evidence. Reserve the final turn for submission.
+mechanisms list with abstention_reason, instead of inventing missing evidence.
 """
 
 
@@ -48,7 +50,8 @@ class ContextBudget:
                          options.endpoint_context_tokens - output_tokens - options.input_safety_tokens)
         if self.limit <= 0:
             raise ValueError("context window leaves no room for input")
-        self.reserve = options.final_report_reserve_tokens
+        self.reserve = options.final_report_reserve_tokens * (
+            1 + min(2, getattr(options, "report_reserve_turns", 2)) if options.version >= 2 else 1)
         self.method = "UTF-8 byte upper bound plus message/tool overhead"
         self.encoding = None
         try:
@@ -133,6 +136,90 @@ def _paper_call(reading, name, args, seen_ids, cap):
     return payload
 
 
+def _submission(args, *, corpus, seen_ids, max_mechanisms, reading, abstracts,
+                code_session, runtime_context, mode, report_char_budget, is_v2):
+    """Validate one attempt without changing evidence or dropping shared invalid facts."""
+    from .agent import validate_report, render_report
+    if is_v2:
+        details = report_v2.validate_detailed(args, seen_ids, corpus, max_mechanisms,
+            reading=reading, abstracts=abstracts, code_session=code_session,
+            runtime_context=runtime_context or {}, mode=mode)
+        clean = details["report"]
+        fitted, rendered = report_v2.render(clean, corpus, report_char_budget, mode)
+    else:
+        clean, problems = validate_report(args, seen_ids, corpus, max_mechanisms,
+                                          reading=reading, abstracts=abstracts)
+        fitted, rendered = clean, render_report(clean, corpus, report_char_budget, mode)
+        details = {"normalized_report": copy.deepcopy(args), "normalizations": [],
+                   "issues": [{"code": "invalid_report", "location": "report", "received": None,
+                               "expected": "valid report", "repair_hint": p} for p in problems],
+                   "mechanism_mapping": [], "dropped_mechanisms": []}
+    issues = copy.deepcopy(details["issues"])
+    retained_ids = {m.get("mechanism_id") for m in fitted.get("mechanisms", [])}
+    mapping = [{**item, "retained": item.get("mechanism_id") in retained_ids}
+               for item in details["mechanism_mapping"]]
+    budget_dropped = [item for item in mapping if not item["retained"]]
+    budget_hint = {}
+    if clean.get("mechanisms") and (budget_dropped or not rendered):
+        _, full_rendered = (report_v2.render(clean, corpus, 10**12, mode) if is_v2
+                            else (clean, render_report(clean, corpus, 10**12, mode)))
+        issues.append({"code": "rendered_budget_exceeded", "location": "report",
+                       "received": len(full_rendered), "expected": report_char_budget,
+                       "repair_hint": "Shorten prose or remove whole lower-priority mechanisms."})
+        budget_hint["rendered_char_budget"] = report_char_budget
+        one = {**clean, "mechanisms": clean["mechanisms"][:1]}
+        _, one_rendered = (report_v2.render(one, corpus, 10**12, mode) if is_v2
+                           else (one, render_report(one, corpus, 10**12, mode)))
+        budget_hint["rendered_chars_with_first_mechanism"] = len(one_rendered)
+    valid_empty = isinstance(args.get("mechanisms"), list) and not args["mechanisms"] and not issues
+    status = ("accepted_partial" if issues else "accepted_complete") if rendered else (
+        "abstained" if valid_empty else "rejected")
+    return {"status": status, "normalized_report": details["normalized_report"],
+            "normalizations": details["normalizations"], "issues": issues,
+            "mechanism_mapping": mapping, "dropped_mechanisms": details["dropped_mechanisms"],
+            "budget_dropped_mechanisms": budget_dropped, "validated_report": clean,
+            "report": fitted, "report_md": rendered, "rendered_chars": len(rendered), **budget_hint}
+
+
+def _feedback(attempt, remaining_turns, max_bytes=4096):
+    """Bound model feedback; complete submitted values remain in the attempt artifact."""
+    def short(value):
+        if isinstance(value, str):
+            return value[:600]
+        if isinstance(value, (list, dict)) and len(json.dumps(value, ensure_ascii=False)) > 600:
+            return json.dumps(value, ensure_ascii=False)[:600]
+        return value
+    issues = [{k: short(v) for k, v in issue.items()} for issue in attempt["issues"][:20]]
+    payload = {"status": attempt["status"], "issues": issues,
+               "problems": [issue.get("repair_hint", issue["code"]) for issue in issues],
+               "remaining_turns": remaining_turns,
+               "issues_not_shown": max(0, len(attempt["issues"]) - len(issues))}
+    if any(i["code"] == "rendered_budget_exceeded" for i in issues):
+        payload.update({k: attempt[k] for k in (
+            "rendered_char_budget", "rendered_chars_with_first_mechanism") if k in attempt})
+        payload["note"] = ("For the size error, shorten shared facts/hypotheses/unknowns and narrative "
+                           "fields or remove whole mechanisms; preserve evidence and required fields.")
+    else:
+        payload["note"] = ("Repair the cited fields using evidence actually returned to this episode. "
+                           "One targeted evidence read is allowed during correction; do not expand the search. "
+                           "If no supported mechanism remains, submit an empty list with abstention_reason.")
+    def encoded_size():
+        return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    while len(payload["issues"]) > 1 and encoded_size() > max_bytes:
+        payload["issues"].pop()
+        payload["problems"].pop()
+        payload["issues_not_shown"] += 1
+    if encoded_size() > max_bytes:
+        # Preserve the field and error kind, not a long submitted value. Full data
+        # is already retained in submission_attempts, outside the model context.
+        payload["issues"] = [{"code": i["code"], "location": str(i.get("location", ""))[:100],
+                              "repair_hint": str(i.get("repair_hint", ""))[:150]}
+                             for i in payload["issues"]]
+        payload["problems"] = [i["repair_hint"] for i in payload["issues"]]
+        payload["note"] = "Correct this field using the visible evidence; further issues are in the submission log."
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
         report_char_budget, mode, fulltext, context_options, code_session=None,
         packet_metadata=None, runtime_context=None, max_output_tokens=16384):
@@ -145,6 +232,10 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
     import jsonschema
 
     is_v2 = context_options.version >= 2
+    if max_turns < 1:
+        raise ValueError("max_turns must be positive")
+    submit_by = max(1, max_turns - min(getattr(context_options, "report_reserve_turns", 2),
+                                     max_turns - 1)) if is_v2 else max_turns
     code_tools_enabled = (code_session is not None and code_session.options.enabled and mode == "improve")
     use_responses = uses_responses(llm_cfg.model)
     client = (make_response_client(llm_cfg) if use_responses else
@@ -162,6 +253,10 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
     if is_v2:
         system = system.replace("(write this out, before any tool call)", "(inspect evidence first if needed)")
         system += OBSERVATION_PROMPT
+        system += (f"\nSUBMISSION SCHEDULE: submit your initial report by response turn {submit_by}, "
+                   f"within the unchanged {max_turns}-turn total. After any rejected submission, "
+                   "repair the reported fields. At most one targeted evidence read is allowed in "
+                   "correction; no further broad search. Submit earlier when evidence is sufficient.\n")
         system += (f"\nFINAL REPORT SIZE: the rendered Markdown must fit within {report_char_budget} "
                    "characters total, including shared evidence, headings, citations and all mechanism fields. "
                    "This is a rendered-character limit, not an input-token or JSON-size limit. "
@@ -178,9 +273,13 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
     res = AnalogyResult(context={"version": context_options.version, "packet": packet_metadata or {},
                                 "input_limit_tokens": budget.limit, "counting": budget.method,
                                 "endpoint_context_cap": context_options.endpoint_context_tokens,
-                                "turn_budgets": []})
+                                "first_submit_deadline_turn": submit_by,
+                                "submission_history_reserve_tokens": budget.reserve,
+                                "turn_budgets": []}, delivery_status="failed")
     seen_ids, abstracts = set(), {}
     nudged = done = False
+    correcting = False
+    correction_reads = 0
     started = time.monotonic()
 
     def append_result(call_id, content):
@@ -193,10 +292,13 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
         estimate = budget.estimate(messages, api_tools)
         if estimate > budget.limit:
             res.reason = "input context budget exhausted before a legal final submission"
+            res.failure_kind = "context_budget"
             break
-        finish_only = turn == max_turns or budget.tool_chars(messages, api_tools) < 2000
+        finish_only = (turn == max_turns or budget.tool_chars(messages, api_tools) < 2000
+                       or (is_v2 and turn >= submit_by and not res.submission_attempts)
+                       or (is_v2 and correcting and correction_reads >= 1))
         res.context["turn_budgets"].append({"turn": turn, "estimated_input_tokens": estimate,
-                                           "finish_only": finish_only})
+                                           "finish_only": finish_only, "correcting": correcting})
         res.turns = turn
         try:
             if use_responses:
@@ -234,6 +336,7 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
                 messages.append(_tool_message(msg) if calls else {"role": "assistant", "content": text})
         except Exception as exc:
             res.reason = f"LLM request failed: {type(exc).__name__}: {exc}"
+            res.failure_kind = "transport"
             res.trace.append(res.reason)
             break
         res.in_tokens += in_tokens
@@ -244,6 +347,7 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
         if not calls:
             if nudged or finish_only:
                 res.reason = "assistant stopped without submit_report"
+                res.failure_kind = "missing_submission"
                 break
             messages.append({"role": "user", "content": "Continue evidence collection with the available tools, "
                              "or call submit_report to finish. Reply with a tool call."})
@@ -251,6 +355,8 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
             continue
         for call in calls:
             name, call_id = call.get("name"), call.get("call_id")
+            attempt_started = time.monotonic()
+            args = None
             try:
                 args = json.loads(call.get("arguments") or "{}")
                 if not isinstance(args, dict):
@@ -258,7 +364,20 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
                 if name in tool_schemas:
                     jsonschema.validate(args, tool_schemas[name])
             except (ValueError, TypeError, jsonschema.ValidationError) as exc:
-                content = json.dumps({"status": "invalid_arguments", "message": str(exc)[:1000]})
+                issue = {"code": "invalid_arguments", "location": (
+                    ".".join(map(str, exc.absolute_path)) if isinstance(exc, jsonschema.ValidationError)
+                    else "arguments"), "received": args,
+                    "expected": "arguments matching the tool schema", "repair_hint": str(exc)[:1000]}
+                if name == "submit_report":
+                    attempt = {"turn": turn, "raw_report": copy.deepcopy(args),
+                               "raw_arguments": call.get("arguments"), "status": "rejected",
+                               "issues": [issue], "correcting": correcting,
+                               "elapsed_seconds": time.monotonic() - attempt_started}
+                    res.submission_attempts.append(attempt)
+                    correcting = is_v2
+                    content = _feedback(attempt, max_turns - turn)
+                else:
+                    content = json.dumps({"status": "invalid_arguments", "message": str(exc)[:1000]})
                 res.trace.append(f"[turn {turn}] {name}: {content}")
                 append_result(call_id, content)
                 continue
@@ -266,6 +385,12 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
             try:
                 if name != "submit_report" and (finish_only or cap < 2000):
                     content = '{"status":"context_budget_exhausted","message":"Use submit_report now"}'
+                elif is_v2 and correcting and name != "submit_report" and (correction_reads >= 1 or name not in {
+                    "submit_report", "read_abstract", "read_paper", "candidate_code_index",
+                    "read_candidate_code", "diff_candidate_code"} or
+                    (name == "read_paper" and (reading is None or args.get("paper_id") not in reading.documents))):
+                    content = json.dumps({"status": "correction_only", "message":
+                        "Correct the report; only one targeted read of known evidence is allowed. No new search/open."})
                 elif name == "search_papers":
                     query = str(args.get("query", "")).strip()
                     try:
@@ -277,6 +402,7 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
                     res.queries.append(query)
                     content = json.dumps({"papers": hits}, ensure_ascii=False)
                 elif name == "read_abstract":
+                    correction_reads += int(is_v2 and correcting)
                     ids = args.get("ids", [])
                     ids = ids[:8] if isinstance(ids, list) else []
                     allowed = [pid for pid in ids if isinstance(pid, str) and pid in seen_ids]
@@ -285,45 +411,42 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
                     content = json.dumps({"papers": papers, "not_returned_ids": [pid for pid in ids
                                          if pid not in {p['id'] for p in papers}]}, ensure_ascii=False)
                 elif name in {"open_paper", "read_paper"} and reading is not None:
+                    correction_reads += int(is_v2 and correcting)
                     content = json.dumps(_paper_call(reading, name, args, seen_ids, cap), ensure_ascii=False)
                 elif name in {"candidate_code_index", "read_candidate_code", "diff_candidate_code"} and code_tools_enabled:
+                    correction_reads += int(is_v2 and correcting)
                     content = json.dumps(code_session.dispatch(name, args, max_chars=cap), ensure_ascii=False,
                                          separators=(",", ":"))
                 elif name == "submit_report":
-                    if is_v2:
-                        clean, problems = report_v2.validate(args, seen_ids, corpus, max_mechanisms,
-                            reading=reading, abstracts=abstracts, code_session=code_session,
-                            runtime_context=runtime_context or {}, mode=mode)
-                        fitted, rendered = report_v2.render(clean, corpus, report_char_budget, mode)
+                    attempt = _submission(args, corpus=corpus, seen_ids=seen_ids, max_mechanisms=max_mechanisms,
+                        reading=reading, abstracts=abstracts, code_session=code_session,
+                        runtime_context=runtime_context, mode=mode, report_char_budget=report_char_budget,
+                        is_v2=is_v2)
+                    attempt.update(turn=turn, raw_report=copy.deepcopy(args), correcting=correcting,
+                                   elapsed_seconds=time.monotonic() - attempt_started)
+                    res.submission_attempts.append(attempt)
+                    content = _feedback(attempt, max_turns - turn)
+                    if attempt["status"] != "rejected":
+                        res.report, res.report_md = attempt["report"], attempt["report_md"]
+                        res.paper_ids = sorted({pid for m in res.report["mechanisms"] for pid in m["paper_ids"]})
+                        res.delivery_status = attempt["status"]
+                        if not res.report_md:
+                            res.reason = (res.report.get("abstention_reason") or
+                                          "agent found no structurally matching mechanism")
+                        done = True
                     else:
-                        clean, problems = validate_report(args, seen_ids, corpus, max_mechanisms,
-                                                         reading=reading, abstracts=abstracts)
-                        fitted, rendered = clean, render_report(clean, corpus, report_char_budget, mode)
-                    valid_empty = isinstance(args.get("mechanisms"), list) and not args["mechanisms"] and not problems
-                    if rendered or valid_empty:
-                        res.report, res.report_md = fitted, rendered
-                        res.paper_ids = sorted({pid for m in fitted["mechanisms"] for pid in m["paper_ids"]})
-                        if not rendered:
-                            res.reason = "agent found no structurally matching mechanism"
-                        content, done = "accepted", True
-                    else:
-                        budget_hint = {"rendered_char_budget": report_char_budget}
-                        if is_v2 and clean.get("mechanisms"):
-                            one_mechanism = {**clean, "mechanisms": clean["mechanisms"][:1]}
-                            _, one_rendered = report_v2.render(one_mechanism, corpus, 10**12, mode)
-                            budget_hint["rendered_chars_with_first_mechanism"] = len(one_rendered)
-                        content = json.dumps({"status": "rejected", "problems": problems or [
-                            "No complete mechanism fits the report budget; shorten and resubmit"],
-                            **budget_hint,
-                            "note": "Resubmit a compact report: shorten shared facts/hypotheses/unknowns and "
-                            "narrative fields; retain only the strongest whole mechanism if needed. "
-                            "Keep all required fields, exact read-evidence citations, validation and rejection "
-                            "conditions. The rendered budget includes headings and repeated citations; "
-                            "aim for narrative text below half the rendered_char_budget."}, ensure_ascii=False)
+                        correcting = is_v2
                 else:
                     content = json.dumps({"status": "unknown_tool", "tool": name})
             except Exception as exc:
                 content = json.dumps({"status": "tool_error", "message": f"{type(exc).__name__}: {exc}"[:1000]})
+                if name == "submit_report":
+                    res.submission_attempts.append({"turn": turn, "raw_report": copy.deepcopy(args),
+                        "status": "rejected", "correcting": correcting, "issues": [{
+                            "code": "validation_error", "location": "report", "received": None,
+                            "expected": "a successful validation operation", "repair_hint": content}],
+                        "elapsed_seconds": time.monotonic() - attempt_started})
+                    correcting = is_v2
             res.trace.append(f"[turn {turn}] {name}({json.dumps(args, ensure_ascii=False)}) ->\n{content}")
             append_result(call_id, content)
             if done:
@@ -332,6 +455,8 @@ def run(packet_md, corpus, llm_cfg, *, max_turns, top_k, max_mechanisms,
             break
     else:
         res.reason = f"no report within {max_turns} turns"
+    if res.delivery_status == "failed" and not res.failure_kind:
+        res.failure_kind = "validation" if res.submission_attempts else "turn_budget"
     res.seconds = time.monotonic() - started
     if reading is not None:
         res.fulltext = reading.snapshot()

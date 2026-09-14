@@ -63,6 +63,7 @@ analogy:
     endpoint_context_tokens: 262144 # conservative configured cap, not measured proxy capacity
     input_safety_tokens: 8192
     final_report_reserve_tokens: 8192
+    report_reserve_turns: 2    # first submit by turn 12 of 14; remaining turns repair evidence
   code_tools:
     enabled: True              # only exposed at improve; read-only episode node allow-list
     max_calls: 10
