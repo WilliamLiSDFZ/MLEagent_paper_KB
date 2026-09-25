@@ -37,6 +37,12 @@ metric_direction_func_spec = FunctionSpec(
 
 
 def determine_metric_direction(agent) -> None:
+    if getattr(getattr(agent.cfg, "candidate_runtime", None), "enabled", False):
+        from engine.candidate_runtime.jigsaw import load_contract
+        contract = load_contract(agent.cfg.workspace_dir / "candidate_results/contract")
+        agent.metric_maximize = contract["maximize"]
+        agent.metric_maximize_reasoning = f"Fixed task contract: {contract['metric_version']}"
+        return
     logger.info("=" * 80)
     logger.info("Starting pre-determination of metric optimization direction...")
     logger.info("=" * 80)
@@ -75,7 +81,7 @@ def determine_metric_direction(agent) -> None:
                     system_message=prompt,
                     user_message=None,
                     func_spec=metric_direction_func_spec,
-                    model=agent.acfg.feedback.model,
+                    model=agent.acfg.feedback.model, role="feedback",
                     temperature=agent.acfg.feedback.temp,
                     cfg=agent.cfg
                 ),
@@ -97,6 +103,8 @@ def determine_metric_direction(agent) -> None:
             return
 
         except Exception as e:
+            if getattr(e, "transport_retry_exhausted", False):
+                raise
             logger.warning(f"Attempt {attempt}/{max_retries} failed: {e}")
             if attempt < max_retries:
                 logger.info("Retrying in a moment...")
@@ -125,7 +133,8 @@ def get_review_func_spec(use_memory: bool) -> FunctionSpec:
                            "Focus on observations only — do not include suggestions for improvement.",
         },
         "metric": {
-            "type": "number",
+            # Failed candidates have no score; downstream code handles null as buggy.
+            "type": ["number", "null"],
             "description": "If the code ran successfully, report the value of the validation metric. Otherwise, leave it null.",
         },
         "lower_is_better": {
@@ -363,6 +372,7 @@ def _check_data_leakage(agent, node: SearchNode, response: dict):
             logger.info(
                 f"Node {node.id} extreme value is justified: {leakage_result['reason']}"
             )
+    return leakage_result
 
 
 def _save_to_global_memory(agent, node: SearchNode):
@@ -371,10 +381,15 @@ def _save_to_global_memory(agent, node: SearchNode):
             parent_node = node.parent
             agent.global_memory.save_node(node, parent_node)
         except Exception as e:
+            if getattr(e, "transport_retry_exhausted", False):
+                raise
             logger.warning(f"[AgentSearch] Failed to save node {node.id} to global memory: {e}")
 
 
 def run(agent, node: SearchNode, exec_result: ExecutionResult) -> SearchNode:
+    from engine.candidate_runtime.integration import enabled, parse_result
+    if enabled(agent.cfg):
+        return parse_result(agent, node, exec_result)
     max_retries = 3
     for retry_idx in range(max_retries):
         try:
@@ -395,7 +410,7 @@ def run(agent, node: SearchNode, exec_result: ExecutionResult) -> SearchNode:
                     system_message=prompt,
                     user_message=None,
                     func_spec=get_review_func_spec(getattr(agent.acfg, "use_global_memory", False)),
-                    model=agent.acfg.feedback.model,
+                    model=agent.acfg.feedback.model, role="feedback",
                     temperature=agent.acfg.feedback.temp,
                     cfg=agent.cfg
                 ),
@@ -443,6 +458,8 @@ def run(agent, node: SearchNode, exec_result: ExecutionResult) -> SearchNode:
 
             return node
         except Exception as e:
+            if getattr(e, "transport_retry_exhausted", False):
+                raise
             logger.warning(f"[parse] tool call failed: {e}")
             continue
 

@@ -20,6 +20,57 @@ from agents.planner import build_chat_prompt_for_model
 
 logger = logging.getLogger("MLEvolve")
 
+# Section title in the FIRST draft's prompt when analogy.draft is on (arm E). The rendered report
+# under it is also stored on the draft node (SearchNode.analogy_report) and traced in
+# logs/analogy/draft_001.md — design: Agentic_Knowledge_Base/docs/analogy_draft_injection_design.md.
+ANALOGY_SECTION_DRAFT = "Cross-domain mechanism suggestions (analogy search on this task's structure)"
+
+
+def _inject_analogy_draft(agent, prompt: Any) -> str:
+    """Run the analogy agent on the task and add its report to the prompt — for the FIRST draft
+    of the run only. Returns the injected report ("" otherwise). Never raises.
+
+    "First" = the virtual root has no child yet and none in flight. Phase 1 (run.py) generates
+    the initial drafts sequentially, so draft 2 already sees draft 1 registered; every later
+    root-level draft sees the Phase 1 drafts. The other drafts get exactly the arm-A prompt.
+    """
+    acfg = getattr(getattr(agent, "cfg", None), "analogy", None)
+    if acfg is None or not getattr(acfg, "enabled", False) or not getattr(acfg, "draft", False):
+        return ""
+    root = getattr(agent, "virtual_root", None)
+    if root is None or getattr(root, "children", None) or getattr(root, "expected_child_count", 0):
+        return ""
+    try:
+        from engine.analogy.agent import retrieve_for_draft
+        text = retrieve_for_draft(agent)
+    except Exception as e:  # the import itself must not be able to end a run either
+        logger.warning("[analogy] draft: unavailable (%s: %s) — drafting without it",
+                       type(e).__name__, e)
+        return ""
+    if not text.strip():
+        return ""
+    prompt["Instructions"] |= {
+        ANALOGY_SECTION_DRAFT: [
+            "",
+            "An analysis pass abstracted this task's structure (how inputs, labels, metric and "
+            "evaluation constrain each other), searched recent research papers for the SAME "
+            "STRUCTURE in other subfields, and mapped the mechanisms found back onto this task. "
+            "They are candidate design commitments for this first solution, not a checklist.",
+            "",
+            "- Adopt at most ONE as the core design commitment of your plan; ignore the rest.",
+            "- The first solution must stay simple: one mechanism means one non-standard "
+            "component, not several stacked.",
+            "- Ignore all of them if your own reading of the task points elsewhere. A mechanism "
+            "working in another field does not make it right here.",
+            "- If you adopt one, say so in WHY: name the mechanism and the structural property it "
+            "addresses.",
+            "",
+            text,
+        ],
+    }
+    logger.info("[draft] injected %d chars of analogy suggestions into the first draft", len(text))
+    return text
+
 
 def run(agent, init_solution_path: Optional[str] = None) -> SearchNode:
     """Generate initial draft. If init_solution_path is provided and readable, use file content directly."""
@@ -97,6 +148,10 @@ def run(agent, init_solution_path: Optional[str] = None) -> SearchNode:
         ],
     }
 
+    # Arm E: the first draft of the run gets the task-structure analogy report here, i.e. before
+    # the sketch guideline, so the "keep it simple" rule below is read with the suggestions in mind.
+    analogy_report = _inject_analogy_draft(agent, prompt)
+
     prompt["Instructions"] |= {
         "Solution sketch guideline": [
             "- This first solution design should be relatively simple — avoid complex ensemble strategies or extensive hyperparameter searches at this stage.\n",
@@ -152,28 +207,8 @@ def run(agent, init_solution_path: Optional[str] = None) -> SearchNode:
 
     prompt["Instructions"]["Implementation guideline"].extend(coldstart_guideline)
 
-    # Literature techniques get their OWN heading. They used to be concatenated onto
-    # coldstart_description and therefore rendered above as "Pretrained Model Strategy ->
-    # Option A [RECOMMENDED]", followed by "you MUST copy the Code template EXACTLY" — an
-    # instruction that makes no sense for a prose technique description and mislabels what
-    # these are.
-    methodology_text = getattr(agent, "methodology_text", "") or ""
-    if agent.use_coldstart and methodology_text.strip():
-        prompt["Instructions"] |= {
-            "Techniques from recent literature": [
-                "",
-                "The following techniques were retrieved from recent research papers because "
-                "they are relevant to THIS task. They are suggestions, not instructions.",
-                "",
-                "- Treat each as a hypothesis to evaluate against the task and data, not as a "
-                "recipe to copy. Adopt one only if you can state why it fits this dataset.",
-                "- Prefer a simple, well-executed baseline over an unfamiliar technique you "
-                "cannot validate — a first solution that runs and scores beats a clever one "
-                "that does not.",
-                "",
-                methodology_text,
-            ],
-        }
+    # No literature injection at draft time: retrieval now runs per improve node on the
+    # diagnosed bottleneck (engine/analogy), which does not exist before the first experiment.
 
     prompt["Instructions"] |= get_prompt_environment()
     prompt["Instructions"] |= ROBUSTNESS_GENERALIZATION_STRATEGY
@@ -205,7 +240,7 @@ def run(agent, init_solution_path: Optional[str] = None) -> SearchNode:
     else:
         plan, code = plan_and_code_query(agent, prompt_complete)
     new_node = SearchNode(plan=plan, code=code, parent=agent.virtual_root, stage="draft",
-                        local_best_node=agent.virtual_root)
+                        local_best_node=agent.virtual_root, analogy_report=analogy_report or None)
     register_node(agent, new_node, prompt_complete, new_branch=True)
 
     logger.info(f"[draft] → node {new_node.id} (branch={new_node.branch_id})")

@@ -35,7 +35,8 @@ CODE_REVIEW_SPEC = FunctionSpec(
                 )
             },
             "revised_code": {
-                "type": "string",
+                # An approved review may explicitly return null instead of a diff.
+                "type": ["string", "null"],
                 "description": (
                     "ONLY if needs_revision=true: Provide targeted fixes using SEARCH/REPLACE diff format.\n\n"
                     "**REQUIRED FORMAT** (use this for each fix):\n"
@@ -70,6 +71,20 @@ def run(agent, node: SearchNode) -> str:
     internet_clarification = get_internet_clarification(getattr(agent.cfg, "pretrain_model_dir", ""))
     if "Instructions" not in prompt:
         prompt["Instructions"] = {}
+    if getattr(getattr(agent.cfg, "candidate_runtime", None), "enabled", False):
+        from engine.candidate_runtime.prompt import instructions
+        prompt["Instructions"]["Code review guidelines"] = [line for line in prompt["Instructions"]["Code review guidelines"]
+            if "Execution time:" not in line and "Submission File Location" not in line]
+        prompt["Instructions"]["Required candidate runtime protocol"] = instructions()
+        prompt["Instructions"]["Runtime review"] = (
+            "Check fixed split before preprocessing, no held-out rows in training, real backward/optimizer updates before "
+            "session.step(), breaking all loops when requested, complete save/load callbacks and session.finish(). "
+            "Repair missing runtime integration. Replace custom candidate deadlines derived from run.json, run started_at, "
+            "parent timestamps or configured budgets with session.remaining(); the runtime already accounts for queueing "
+            "and the whole-run deadline. Remove duplicate finalization-reserve subtraction and post-finish assertions "
+            "on legacy submission paths; consume result['submission_path'] instead. "
+            "Each predict callback must preserve row order and restore model mode."
+        )
     if "Implementation guideline" in prompt["Instructions"]:
         prompt["Instructions"]["Implementation guideline"].extend(internet_clarification)
     else:
@@ -90,7 +105,7 @@ def run(agent, node: SearchNode) -> str:
                     system_message=prompt,
                     user_message=None,
                     func_spec=CODE_REVIEW_SPEC,
-                    model=agent.acfg.code.model,
+                    model=agent.acfg.code.model, role="code",
                     temperature=agent.acfg.code.temp,
                     cfg=agent.cfg
                 ),
@@ -121,6 +136,8 @@ def run(agent, node: SearchNode) -> str:
                             )
                             return node.code
                         except Exception as e:
+                            if getattr(e, "transport_retry_exhausted", False):
+                                raise
                             logger.warning(
                                 f"Failed to apply diff patch in code review: {e}, keeping original code to avoid writing raw diff to runfile"
                             )
@@ -150,6 +167,8 @@ def run(agent, node: SearchNode) -> str:
             return node.code
 
         except Exception as e:
+            if getattr(e, "transport_retry_exhausted", False):
+                raise
             error_msg = f"Code review failed with exception: {e}"
             if attempt < max_retries - 1:
                 logger.warning(f"{error_msg} - Will retry (attempt {attempt + 1}/{max_retries})")

@@ -87,7 +87,7 @@ def run(agent, node: SearchNode) -> dict:
                 system_message=prompt,
                 user_message=None,
                 func_spec=DATA_LEAKAGE_CHECK_SPEC,
-                model=agent.acfg.feedback.model,
+                model=agent.acfg.feedback.model, role="feedback",
                 temperature=agent.acfg.feedback.temp,
                 cfg=agent.cfg
             ),
@@ -107,6 +107,7 @@ def run(agent, node: SearchNode) -> dict:
             "has_leakage": has_leakage,
             "reason": reason,
             "confidence": confidence,
+            "check_succeeded": True,
         }
     except Exception as e:
         logger.error(f"Data leakage check failed for node {node.id}: {e}")
@@ -114,4 +115,5 @@ def run(agent, node: SearchNode) -> dict:
             "has_leakage": False,
             "reason": f"Leakage check failed due to error: {str(e)}",
             "confidence": "low",
+            "check_succeeded": False,
         }

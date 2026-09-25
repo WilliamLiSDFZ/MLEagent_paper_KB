@@ -12,6 +12,10 @@ from rich.syntax import Syntax
 import shutup
 from rich.logging import RichHandler
 import logging
+from engine.analogy.fulltext import FullTextConfig
+from engine.analogy.context import ContextOptions
+from engine.analogy.code_tools import CodeToolOptions
+from engine.candidate_runtime.config import CandidateRuntimeConfig
 
 # Lazy import to avoid circular dependency with engine.search_node
 # Journal and filter_journal are imported where needed via _get_journal_classes()
@@ -34,6 +38,8 @@ class StageConfig:
     temp: float
     base_url: str
     api_key: str
+    reasoning_effort: str = "high"
+    max_output_tokens: int = 16384
 
 @dataclass
 class DecayConfig:
@@ -106,6 +112,7 @@ class AgentConfig:
 class ExecConfig:
     timeout: int
     agent_file_name: str
+    max_parallel_run: int | None = None
 
 
 @dataclass
@@ -114,9 +121,25 @@ class ColdstartConfig:
     task_json_path: str
     model_json_path: str
     description: str                        # pretrained-model guidance (runtime-populated)
-    methodology_text: str = ""              # literature techniques (runtime-populated)
-    inject_into_improve: bool = False       # also show techniques to improve_agent
-    improve_token_budget: int = 2000        # budget for that injection
+
+
+@dataclass
+class AnalogyConfig:
+    """Improve-stage analogy retrieval (engine/analogy). Mirror of the `analogy:` YAML block —
+    OmegaConf.merge validates against this, so a key present in only one place kills the run
+    at startup (that happened with `agent_paper_filter`)."""
+    enabled: bool = False
+    improve: bool = True
+    draft: bool = False
+    corpus_path: str = ""
+    max_turns: int = 10
+    top_k: int = 10
+    max_mechanisms: int = 3
+    report_char_budget: int = 8000
+    max_output_tokens: int = 16384
+    context: ContextOptions = field(default_factory=ContextOptions)
+    code_tools: CodeToolOptions = field(default_factory=CodeToolOptions)
+    fulltext: FullTextConfig = field(default_factory=FullTextConfig)
 
 
 @dataclass
@@ -152,35 +175,8 @@ class Config(Hashable):
     cpu_number: str
 
     coldstart: ColdstartConfig
-
-    methodology_kb_path: str = ""
-    methodology_retrieval: str = "vector"
-    abstract_index_path: str = ""
-    lazy_pool: int = 40
-    lazy_min_score: float = 0.05
-    max_extractions_per_coldstart: int = 20
-    lazy_extract_workers: int = 4
-    lazy_technique_rerank: bool = True
-    lazy_tech_top_n: int = 0            # 0 = unlimited
-    lazy_tech_min_score: float = 0.3
-    # Agent paper filter — replaces the technique reranker when on. Every key here must also
-    # exist in config.yaml AND vice versa: OmegaConf.merge validates against this dataclass, so
-    # a key present only in the YAML raises ConfigKeyError at startup and kills the run before
-    # it writes anything. That has happened; utils/verify_kb_injection.py section 1d now checks
-    # top-level keys, not only coldstart.* ones.
-    agent_paper_filter: bool = True
-    filter_min_keep: int = 5
-    filter_max_keep: int = 15
-    filter_batch_size: int = 10
-    retr_center_embeddings: bool = True
-    retr_query_mode: str = "llm"
-    retr_query_cache_dir: str = ""
-    retr_alpha: float = 0.5
-    retr_pool: int = 30
-    retr_top_n: int = 10
-    retr_min_score: float = 0.15
-    retr_token_budget: int = 6000
-    retr_embedding_device: str = "cpu"
+    analogy: AnalogyConfig = field(default_factory=AnalogyConfig)
+    candidate_runtime: CandidateRuntimeConfig = field(default_factory=CandidateRuntimeConfig)
 
     use_grading_server: bool = True
     init_solution: InitSolutionConfig = field(default_factory=InitSolutionConfig)
@@ -309,6 +305,6 @@ def save_run(cfg: Config, journal):
     
     # save the best found solution
     best_node = journal.get_best_node()
-    if best_node is not None:
+    if best_node is not None and not getattr(getattr(cfg, "candidate_runtime", None), "enabled", False):
         with open(cfg.log_dir / "best_solution.py", "w") as f:
             f.write(best_node.code)

@@ -62,10 +62,17 @@ class AgentSearch:
         self.branch_node_count: Dict[int, int] = {}
         self.use_coldstart = cfg.coldstart.use_coldstart
         self.coldstart_description = cfg.coldstart.description
-        # Literature techniques from the methodology KB, kept separate from the
-        # pretrained-model guidance above (see coldstart/knowledge.py). Empty unless
-        # methodology_kb_path is set.
-        self.methodology_text = getattr(cfg.coldstart, "methodology_text", "") or ""
+
+        # Analogy retrieval (arm D): load the paper corpus and build BM25 now rather than at the
+        # first improve node, so a wrong corpus_path shows up in the first minute of the log and
+        # the ~1-2 min tokenization does not land on the generation path. Never fatal.
+        if getattr(getattr(cfg, "analogy", None), "enabled", False):
+            try:
+                from engine.analogy.corpus import load_corpus
+                load_corpus(str(cfg.analogy.corpus_path or ""))
+            except Exception as e:
+                logger.warning(f"[analogy] corpus preload failed ({type(e).__name__}: {e}); "
+                               f"improve nodes will retry lazily")
 
         # Top-N candidates
         self.top_k = self.scfg.top_candidates_size
@@ -211,6 +218,9 @@ class AgentSearch:
                         else:
                             logger.info(f"Node {result_node.id} passed code review without changes")
 
+                    from engine.candidate_runtime.integration import register_candidate
+                    register_candidate(self.cfg, result_node)
+
                     if not execute_immediately:
                         logger.info(f"Node {result_node.id} code generated and reviewed, execution deferred")
                         result_node.pending_execution = True
@@ -274,7 +284,8 @@ class AgentSearch:
             best_metric = self.best_node.metric.value if (self.best_node and self.best_node.metric) else None
             logger.info(f"[step] {node.id} → {result_node.id}: metric={metric_value}, best={best_metric}")
 
-        if result_node and result_node.metric and result_node.metric.value is not None:
+        if result_node and ((result_node.metric and result_node.metric.value is not None)
+                            or result_node.artifact_status == "scoreable"):
             solution_manager.update_best_solution(self, result_node)
 
         self.current_step = len(self.journal)

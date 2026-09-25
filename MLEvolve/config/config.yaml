@@ -22,48 +22,92 @@ cpu_number: 21
 # Model paths
 torch_hub_dir: ""       # path to torch hub cache, e.g. /data/pretrain_models/torch_models
 pretrain_model_dir: ""  # path to pretrained model weights, e.g. /data/pretrain_models
-methodology_kb_path: ""       # vector/llm/static: KB with index|insight.md; lazy: methodology_kb ROOT (extraction cache tree). empty = off
-methodology_retrieval: vector # vector = insight-index retrieval | llm = LLM category match | static = methodology_map.json | lazy = abstract-index + on-demand extraction
 
-# --- lazy mode (methodology_retrieval: lazy) ---
-abstract_index_path: ""       # dir with the abstract index (records.jsonl/embeddings.npy/manifest.json)
-lazy_pool: 40                 # abstract-retrieval candidates (recall-oriented)
-lazy_min_score: 0.05          # LOW relative threshold (precision recovered at assembly)
-max_extractions_per_coldstart: 20   # cost ceiling: papers deep-extracted per cold-start
-lazy_extract_workers: 4       # concurrent PDF+LLM extractions
-lazy_technique_rerank: True   # True = 2nd-stage technique-level retrieval over extracted content | False = inject paper-level, ranked by abstract score
-                              # IGNORED when agent_paper_filter is True (the agent replaces this stage)
-# --- agent paper filter (replaces the 2nd-stage technique reranker) ---
-# Embedding similarity cannot represent "this method needs a modality the dataset does not have":
-# multimodal meme detection sits right next to text toxicity classification in embedding space.
-# jigsaw was handed CLIP encoders and meme captions for a text-only competition and adopted
-# 3 of 89 nodes. An LLM reading title+abstract against the available data can rule those out.
-agent_paper_filter: True      # False = keep the embedding-only two-stage path
-filter_min_keep: 5            # floor: if the agent keeps fewer, top up by stage-1 score (an empty
-                              # injection turns the KB arm into an expensive baseline)
-filter_max_keep: 15           # ceiling: prompt size must not depend on how strict the agent felt
-filter_batch_size: 10         # abstracts per call; one 40-paper call degrades toward the end
-retr_center_embeddings: True  # mean-center dense vectors (fixes anisotropy; validated on 2 tasks: 4->8/10 and 8->9/10 on-topic)
-retr_query_mode: llm          # llm = distil the description into a short ML-task statement (one cached LLM call) | raw = use the description as-is
-retr_query_cache_dir: ""      # where distilled queries are cached; empty = <abstract_index_path>/../query_cache
-lazy_tech_top_n: 0            # max techniques injected (rerank mode); 0 = unlimited
-lazy_tech_min_score: 0.3      # relative threshold for technique similarity (precision-oriented)
-retr_alpha: 0.5               # hybrid weight: 1.0 = pure BM25, 0.0 = pure vector
-retr_pool: 30                 # candidates fetched before selection
-retr_top_n: 10                # max insights injected
-retr_min_score: 0.15          # keep hits scoring >= this fraction of the best hit
-retr_token_budget: 25000      # approx token cap on injected guidance.
-                              # Measured over methodology_kb: 9.9 [POSITIVE] techniques per paper,
-                              # 611 chars each. 25k tokens = ~100k chars = ~15 papers' worth, which
-                              # is what filter_max_keep allows. Was 6000, which truncated.
-retr_embedding_device: cpu    # cpu | cuda (must match the index's embedding model)
+# ============================================================
+#  Analogy retrieval (improve stage) — arm D when enabled
+# ============================================================
+# At every improve node an agent diagnoses the bottleneck of the node being improved, rewrites
+# it as topic-independent queries, searches the paper corpus with BM25 and maps the mechanisms
+# it finds back onto this pipeline (engine/analogy/, design doc in the KB repo:
+# docs/analogy_bm25_agent_design.md). Per-node artefacts land in logs/analogy/.
+# draft=True additionally injects task-level analogy into the first draft (arm E/F).
+# Every key here must also exist in config/__init__.py
+# (AnalogyConfig) — a YAML-only key is a ConfigKeyError at startup.
+analogy:
+  enabled: False                # False = arm A, unchanged
+  improve: True                 # run the agent at every improve node (arm D)
+  draft: False                  # run it ONCE on the task itself, before the first draft (arm E)
+  corpus_path: ""               # dir with records.jsonl + manifest.json (KB repo: output/paper_corpus)
+  max_turns: 14                 # includes source inspection and report correction
+  top_k: 10                     # default hits per search_papers call (the agent may ask up to 20)
+  max_mechanisms: 3             # mechanisms kept per report
+  report_char_budget: 12000     # includes evidence + complete mechanisms; never sliced JSON
+  max_output_tokens: 16384      # reasoning and visible output share this ceiling
+  context:
+    version: 2                 # saved old configurations without this field retain v1
+    task_head_chars: 8000
+    task_tail_chars: 3000
+    data_chars: 6000
+    plan_chars: 12000
+    implementation_chars: 6000
+    analysis_chars: 5000
+    log_head_chars: 2000
+    log_tail_chars: 6000
+    attempts_chars: 10000
+    trajectory_nodes: 10
+    trajectory_plan_chars: 600
+    runtime_chars: 12000
+    max_packet_chars: 80000
+    pretrained_chars: 4000
+    max_input_tokens: 196608    # accumulated conversation per request; billed usage logged separately
+    endpoint_context_tokens: 262144 # conservative configured cap, not measured proxy capacity
+    input_safety_tokens: 8192
+    final_report_reserve_tokens: 8192
+    report_reserve_turns: 2    # first submit by turn 12 of 14; remaining turns repair evidence
+  code_tools:
+    enabled: True              # only exposed at improve; read-only episode node allow-list
+    max_calls: 10
+    max_total_chars: 120000
+    max_read_chars: 20000
+    default_read_lines: 200
+    max_read_lines: 400
+    max_diff_chars: 20000
+  fulltext:
+    enabled: False             # opt in to reading original text of retrieved papers (D/E/F)
+    cache_dir: ""              # default: MLEvolve/cache/paper_fulltext; shared PVC on cluster
+    offline: False             # True = exact cached versions only, no network
+    max_papers: 3              # distinct open attempts per invocation, including failures
+    max_read_calls: 12
+    read_chars: 8000            # body characters returned per read_paper call
+    total_chars: 40000          # cumulative returned body characters; repeat reads count
+    open_timeout_seconds: 60.0 # includes lock wait, download and subprocess parsing
+    total_open_seconds: 150.0  # cumulative open time per invocation
 
 # ============================================================
 #  Code execution
 # ============================================================
+candidate_runtime:
+  enabled: false              # Opt in for NEW Jigsaw runs; no change to existing configurations.
+  draft_budget_seconds: null # Includes training, validation and export; null uses exec.timeout.
+  candidate_budget_seconds: null
+  first_validation_seconds: 900
+  validation_interval_seconds: 1800
+  export_interval_seconds: 3600
+  smoke_steps: 5
+  smoke_rows: 128
+  finalization_reserve_seconds: 900
+  finalization_safety_factor: 1.5
+  validation_fraction: 0.05
+  keep_snapshots: 2
+
 exec:
-  timeout: 32400
+  timeout: 21600               # per-node execution cap, seconds. 6 h since 2026-09-04: at the old
+                               # 9 h one stuck node ate 3/4 of the 12 h run budget (14 of 65 nodes
+                               # in the 2026-09-03 jubias/tf2qa batch died this way). Runs before
+                               # that date used 32400; the analysis tier reads this from logs/config.yaml.
   agent_file_name: runfile.py
+  max_parallel_run: null       # auto: one candidate per visible CUDA GPU; CPU-only: one slot.
+                               # A positive value can LOWER GPU concurrency, never oversubscribe it.
 
 # ============================================================
 #  Agent config
@@ -78,26 +122,23 @@ agent:
   data_preview: True
 
   # --- LLM models ---
-  # Claude Opus 4.8 via Anthropic's OpenAI-compatible endpoint.
-  # NOTE: Opus 4.7+ removed sampling params — `temp` below is IGNORED for these models
-  # (llm/openai.py omits temperature/top_p entirely; sending them returns 400).
-  # Using a gateway instead (e.g. OpenRouter)? Set base_url to the gateway and model to
-  # "anthropic/claude-opus-4-8" — the provider prefix is handled.
   # Credentials come from the ENVIRONMENT, never from this file (it is in git) and never
   # from the command line (argv shows up in `ps` and in `set -x` logs).
   # Set LLM_API_KEY / LLM_BASE_URL / LLM_MODEL — the k8s Secret provides them in-cluster.
-  # Defaults to OpenAI GPT-5.6 Terra (balance of intelligence and cost; `gpt-5.6-sol` is
-  # the flagship, `gpt-5.6-luna` the cheap one). GPT-5 models are reasoning models: they
-  # reject temperature/top_p/presence_penalty and require max_completion_tokens instead of
-  # max_tokens — llm/openai.py handles both automatically, so `temp` below is ignored here.
+  # New experiments use GPT-5.6 Sol via Responses, with explicit role/effort.
+  # Sampling settings are omitted. Historical model overrides remain supported.
   code:
-    model: ${oc.env:LLM_MODEL,gpt-5.6-terra}
+    model: ${oc.env:LLM_MODEL,gpt-5.6-sol}
     temp: 1
+    reasoning_effort: ${oc.env:LLM_REASONING_EFFORT,high}
+    max_output_tokens: 16384
     base_url: ${oc.env:LLM_BASE_URL,https://api.openai.com/v1}
     api_key: ${oc.env:LLM_API_KEY,""}
   feedback:
-    model: ${oc.env:LLM_MODEL,gpt-5.6-terra}
+    model: ${oc.env:LLM_MODEL,gpt-5.6-sol}
     temp: 1
+    reasoning_effort: ${oc.env:LLM_REASONING_EFFORT,high}
+    max_output_tokens: 16384
     base_url: ${oc.env:LLM_BASE_URL,https://api.openai.com/v1}
     api_key: ${oc.env:LLM_API_KEY,""}
 
@@ -129,7 +170,7 @@ agent:
   # --------------------------------------------------------
   search:
     # Parallel & resources
-    parallel_search_num: 3
+    parallel_search_num: 3     # search/LLM workers; independent of GPU execution slots
     num_gpus: 1
 
     # Node expansion limits
@@ -187,7 +228,7 @@ agent:
     exploration_constant: 1.414
     lower_bound: 0.5
     alpha: 0.01
-    phase_ratios: [0.3, 0.7]
+    phase_ratios: [ 0.3, 0.7 ]
 
 # ============================================================
 #  Cold-start knowledge
@@ -197,20 +238,3 @@ coldstart:
   task_json_path: "engine/coldstart/competition_tag_classified.json"
   model_json_path: "engine/coldstart/models_guidance_classified.json"
   description: ""                     # runtime: pretrained-model guidance ONLY
-  # Runtime: literature techniques from the methodology KB, kept SEPARATE from
-  # `description`. They used to be appended to it, which meant draft_agent presented them
-  # inside its "Pretrained Model Strategy -> Option A [RECOMMENDED]" block, i.e. paper
-  # techniques were labelled as pretrained-model recommendations and inherited that block's
-  # "copy the Code template EXACTLY" instruction. Now each is rendered under its own heading.
-  methodology_text: ""
-  # Also show the retrieved techniques to improve_agent, not just at draft time.
-  # Rationale: the KB currently reaches only the 3 initial drafts out of 14-19 nodes per run,
-  # so its causal footprint is narrow; and improve_agent's plateau prompt already tells the
-  # model to "refer to the expert technique suggestions above" while nothing injects any.
-  # Default False: turning it on changes the KB arm, so it must be an explicit ablation.
-  inject_into_improve: False
-  improve_token_budget: 12000         # smaller than retr_token_budget used at draft, because
-                                      # this text is repeated at EVERY improve node. Was 2000,
-                                      # i.e. 8k chars — by far the tightest cap in the system and
-                                      # the one most likely to have been cutting techniques off
-                                      # mid-list.
