@@ -4,6 +4,606 @@ A running record of notable changes to this project. Newest entries on top.
 
 ---
 
+## 2026-09-20 — Evidence-based implementation-change evaluation for Vendi
+
+The S61/S62 audit found that comparing separate parent/child summaries could miss
+small operative changes: connecting an existing sampler to the training loader,
+or changing ranking-loss microbatch coverage and accumulation scaling. Improve
+implementation evaluation now reads the complete raw diff with selected source
+context and static call/use locations. Full diff hunks are never silently truncated;
+over-budget packets become unavailable and omitted optional context is recorded.
+
+Assessments distinguish `changed`, `no_change` and `insufficient_evidence`. Claimed
+changes must cite matching parent/child source quotes, a changed code line and a
+child use/call. Identical/equivalent ASTs support deterministic no-change decisions;
+unsupported no-change claims about different ASTs remain unresolved. Evidence
+validation does not prove semantic correctness, whole-program reachability or
+runtime activation. Only supported change descriptions enter embeddings; refusal
+and uncertainty prose never become diversity samples or zero scores.
+
+Coverage, plots and reports now expose changed/no-change/insufficient counts and
+candidate denominators. Implementation Vendi is explicitly conditional on measurable
+static changes. Non-scoring states survive JSONL import and re-embedding; runs
+without scores remain in the report. A separate `diff-v1` cache preserves existing
+proposal/draft caches and prevents mixing old and new implementation representations.
+Raw evidence packets are saved for audit; usage and rerun instructions are in
+`docs/compare_vendi.md`.
+
+Validation: 81 offline tests pass, including source-evidence rejection, the two
+regression mechanisms, bounded correction, cache isolation and scoring/coverage
+contracts. All 16 actual S61/S62 improve packets fit their full diff and selected
+context within the 160,000-character budget. Two manually authored assessments
+validate against the actual source lines; they are regression fixtures, not live
+model results. Live LLM validation and score recomputation remain pending explicit
+authorization after automatic approval review rejected source transfer to the
+configured proxy. No successful live API call, training or cluster change occurred;
+previous experiment results remain intact. Offline evidence is recorded in
+`results/vendi_evaluation_validation/offline_validation.json`.
+
+Follow-up on the user's 59/62 rerun: two improve assessments were unresolved and
+one A62 extraction timed out. A61's sampler was genuinely not connected, but F62's
+RoBERTa replacement was excluded because optimizer-group context omitted the
+connection to AdamW. Packet v2 now includes short surrounding statements/control
+blocks and bounded module-variable connections; no evidence gate was relaxed.
+Diff API transport calls now participate in the shared three-attempt retry budget.
+All 85 offline tests pass. All 16 real improve packets still fit their selected
+context within 160,000 characters (maximum 145,699); F62's optimizer wiring is now
+present. Re-extraction uses fresh versioned diff cache keys while proposal/draft
+caches remain valid. No new API requests were made in this follow-up; the user's
+current score files remain unchanged. Details: `results/vendi_s61_s62_fixed/DIFF_REVIEW.md`
+and `results/vendi_evaluation_validation/context_v2_validation.json`.
+
+## 2026-09-18 — Reusable arm-diversity comparison with Vendi
+
+Added `scripts/compare_vendi.py` with a small offline statistics helper. It reads
+MLEvolve journals or generic candidate JSONL, compares consistent proposal/code
+mechanism representations, and reports standard cosine Vendi at matched candidate
+counts within each task/stage/view. Parent and child implementations are extracted
+separately before comparing changes. Long source is chunked without silent prefix
+truncation; summaries and embeddings are cached by content and model identity.
+
+Arbitrary arm labels and explicit run pairing are supported. No seed-based pairing,
+borrowed baseline, cross-task pooling, or significance claims are introduced.
+Repeated solutions remain samples; duplicate exports are merged. Missing sources
+and extraction failures are reported separately from valid scores. CSV tables,
+auditable candidate records, wide plots and a settings manifest are generated;
+dry-run and precomputed-vector input work without model/API calls. Usage and
+measurement limits are documented in `docs/compare_vendi.md`.
+
+Validation: 27 offline mathematical, input/cache and end-to-end CLI tests pass;
+CSV/plot generation was exercised on synthetic vectors and plots visually checked.
+A read-only dry-run also passes on the fetched S61/S62 journals. No live LLM calls, embedding
+downloads, training, cluster changes or experiment-result modifications were made.
+
+2026-09-19 follow-up: the first live S61/S62 analysis produced all 62 summaries,
+but MiniLM's 256-token default excluded eight representations (six A, two F).
+Added an explicit, model-capacity-checked `--embedding-max-length` override and
+`--reembed` to replace all vectors from saved summaries without LLM calls. Incomplete
+coverage now prints failure counts. Offline CPU encoding with the cached MiniLM at
+512 tokens includes all 62 original summaries; old experiment outputs are preserved.
+
+The same audit found that MLEvolve serializes parent relationships in top-level
+`node2parent`, with inline `parent` null. The reader now resolves that map and checks
+conflicting IDs; missing parent code cannot silently turn an improve implementation
+into a whole-code sample. All 16 fetched improve implementations resolve their
+parent code. Existing summary-cache keys remain valid, but these improve summaries
+need new parent extraction/comparison calls before interpreting change diversity.
+Regression tests cover parent maps, length/capacity checks and uniform re-embedding;
+the recovery check did not call an LLM or modify the cluster.
+
+## 2026-09-13 — Reliable analogy report delivery (P0)
+
+Implemented only the approved report-delivery phase after the S57–S59 audit.
+Context-v2 reports now use explicit runtime-evidence arrays, visible packet path
+examples and field-level validation feedback. Legacy path strings are normalized
+deterministically with every reference checked and the conversion recorded.
+Code anchors and actually read paper quotes remain required; invalid shared facts
+block delivery, and invalid paper evidence cannot silently downgrade a mechanism.
+
+The existing 14-turn loop submits by turn 12, reserving correction opportunities
+without raising the turn or input limits. Correction permits one targeted read of
+known evidence. Feedback is bounded to 4,096 UTF-8 bytes and gives compression
+advice only for size errors. Submission attempts preserve raw/normalized reports,
+diagnostics, whole-mechanism removals and original-index-to-final-ID mappings.
+Complete acceptance, partial acceptance, explicit abstention and failure are
+recorded separately; the legacy `ok` field is preserved.
+
+Validation: 135 CPU regression tests plus the existing analogy-injection checks
+pass, including historical S57/S58 path failures, turn-12/13/14 correction,
+unread/invalid evidence rejection, partial-report provenance, bounded Unicode
+feedback, old configurations and the pinned OpenAI SDK's mocked transport/review
+contracts. No model API calls, GPU runs or cluster changes were made. P1 mechanism
+observation, early stopping, scoring and Job changes remain outside this update.
+
+Also removed 15 audited one-shot or duplicate scripts under `/tmp`. Reusable
+repository analysis/replay/regression tools and scripts referenced by reports
+were retained, along with all logs, results and source evidence. Removed paths
+and SHA256 hashes are recorded in `results/9.13/analogy_p0_validation/cleanup.json`.
+Details: `results/9.13/analogy_p0_validation/REPORT.md`.
+
+## 2026-09-12 — Fix nullable review contracts terminating Sol experiments
+
+Sol S57 A generated its first draft, then exited during code review because the
+schema rejected `revised_code=null` even though the prompt explicitly permits it
+for approved code. A second contradiction required a numeric `metric` while
+instructing failed candidates to return null. Both schemas now admit their
+documented null values. Existing review decisions, bounded retries, bug marking,
+metric-direction checks and transport error handling remain intact.
+
+Added `utils/verify_review_contracts.py`, using the real review specs, agent
+functions and pinned OpenAI SDK with mocked HTTP. The pre-fix suite reproduced
+eight null-related errors across Sol and GPT-6; all 12 tests now pass, including
+runtime-enabled review, optional omission, diff application, bounded missing-fix
+handling, failed-result parsing, numeric/zero scores, direction mismatch and
+rejection of invalid types or missing required fields. The existing 30 transport
+and six configuration regressions also pass (48 total).
+
+Evidence: `results/9.12/sol_a57_schema_fix/REPORT.md`; original diagnosis remains
+in `results/9.12/sol_a57_schema_error/REPORT.md`. Only local code and records were
+changed. No cluster code, environment, Job or Pod was changed and no model API
+requests were made. The user will synchronize through Git and recreate the Jobs
+to rerun; existing S57–S59 YAML files remain usable.
+
+## 2026-09-11 — Switch current experiments to GPT-5.6 Sol/high
+
+Following repeated GPT-6 service-limit failures, MLEvolve's defaults, generic Job
+and S57–S59 A/F Jobs now explicitly use `gpt-5.6-sol/high`. Sol uses the existing
+Responses transport for code, feedback and analogy, retaining structured streaming,
+function calls, opaque reasoning replay and bounded transient retries. Context v2,
+source inspection, full-text reading, A/F injection, candidate runtime and all
+experiment budgets/GPU settings remain unchanged. This is a model migration rather
+than a rollback of the recent agent improvements.
+
+The new `MLEVOLVE_REQUIRED_MODEL` preflight guard verifies all model slots, effort
+and context version. The old GPT-6 guard/template and legacy Terra routes remain
+supported. A reusable Sol A/F template is added; S57–S59 Job and output names now
+contain `gpt56sol` to separate them from the interrupted GPT-6 batch.
+
+Validation: 84 offline tests pass and two Linux-affinity tests are skipped on macOS
+(86 cases across transport, configuration, observation, handoff and execution).
+A live CPU-dev probe using the existing Python 3.11 / OpenAI SDK 1.66.3 environment
+passes all four checks in six requests: text streaming, structured JSON, feedback
+function output and two consecutive tool rounds followed by a final answer. The
+three wrapper telemetry records confirm returned `gpt-5.6-sol/high`; the tool probe
+successfully replays encrypted state. These short checks establish compatibility,
+not sustained six-Job throughput or guaranteed freedom from proxy limits.
+
+Evidence: `results/9.11/sol_migration_validation/REPORT.md`. Changes are local and
+uncommitted; live validation uses an isolated temporary CPU-dev source copy and
+existing credentials without changing shared repositories, the venv, Secrets or
+experiment Pods. The user will synchronize through Git and apply the updated Jobs.
+New Sol Job names do not stop existing GPT-6 Jobs automatically.
+
+## 2026-09-11 — Fix S57–S59 streamed timeouts and candidate execution failures
+
+The live S57–S59 audit found F57, A58 and A59 terminating after a single
+`request_timeout` SSE event during their third initial draft. The GPT-6 transport
+recognized `timeout` but omitted `request_timeout`, so it incorrectly bypassed
+bounded retries and caused the pipeline to cancel active/queued candidates.
+MLEvolve now classifies this code consistently across JSON, streamed errors,
+response.failed and SDK error envelopes. Failed partial output is discarded and
+the original request is retried at most three times; deterministic failures and
+exhausted retries retain the existing terminal behavior.
+
+The audit also exposed an older executor bug: prepending CPU affinity statements
+made valid `from __future__` imports illegal. A separate launcher now sets affinity
+and execs the candidate normally, preserving module semantics, line numbers, GPU
+visibility and process groups. Execution summaries report actual elapsed seconds;
+a candidate-raised TimeoutError no longer claims that the executor's full time
+limit elapsed.
+
+Generation and review now explicitly use the runtime's remaining()/elapsed() APIs
+instead of deriving a candidate deadline from the whole-run or parent start time.
+They also consume finish()['submission_path'] instead of checking legacy output
+paths after a successful snapshot export. Conflicting runtime-mode directory and
+submission self-check guidance was removed. These rules reduce known generation
+mistakes; they do not guarantee correctness of arbitrary generated code.
+
+Validation: 75 regressions pass in the CPU dev pod's existing Python 3.11 / SDK
+1.66.3 environment (15 transport, 21 execution-pipeline, 39 candidate-runtime),
+including real Linux affinity and CPU training subprocesses. Another 12 local
+analogy-handoff tests pass; syntax and whitespace checks pass. Details are in
+`results/9.11/s57_s59_fixes_validation/REPORT.md`; original failure evidence remains
+in `results/9.11/s57_s59_live_errors_20260912_044127Z/REPORT.md`.
+Changes are local. CPU-dev verification uses an isolated temporary source copy,
+without updating shared code/venv, calling model APIs, running GPU training or
+restarting experiments. Git synchronization and experiment restarts remain with
+the user; the existing S57–S59 Job configurations can be reused.
+
+Follow-up after the user's restart: A58 on commit `76a1eae` failed at 23:01 PDT
+on the separately named `server_is_overloaded` SSE error. The previous fix was
+present on the cluster (commit and source hashes matched), but this overload alias
+was also missing from the transient-code set. Added it to the same bounded retry
+path. All 15 transport tests pass with both observed codes across six error
+representations, recovery and three-attempt exhaustion; unknown/deterministic
+errors remain terminal. This follow-up is local only and does not update the
+running Pods. Evidence: `results/9.11/s57_s59_overload_20260912_060422Z/REPORT.md`.
+
+## 2026-09-11 — Evidence-aware analogy context and GPT-6 experiment migration
+
+Implemented the approved `docs/analogy_context_and_gpt6_plan.md` in MLEvolve.
+Previously, analogy often received a runtime status instead of an implementation
+summary, and plan truncation hid changes already made to loss or sampling. Context
+v2 separates plans from observed implementation/runtime facts, cleans captured logs
+before truncation, and exposes selected checkpoint identity, training updates,
+validation history, costs and actual/unknown resource limits. Budgets are configurable:
+80K-character initial packet, 14 model turns, 12K-character complete report and
+196,608-token accumulated input cap per request with output/safety reserves.
+
+Three read-only tools index, page through and diff allow-listed candidate source.
+Runtime source must match the registered SHA256; runtime-off tasks use a frozen
+SearchNode copy. Exact returned text, source references and budgets are recorded.
+Jigsaw adds cached public-validation overall/subgroup/BPSN/BNSP diagnostics and
+same-contract parent comparisons without reading weights/private labels or changing
+the scalar metric. Other tasks retain the generic source/context path.
+
+Reports distinguish observations, hypotheses and unknowns, and preserve mechanism
+assumptions, constraints and validation/rejection conditions. Both planner paths now
+declare one selected mechanism, reject all, or record an unparseable decision as
+unknown. The selected mechanism reaches the coder independently of its compressed
+plan, including diff retries. Child records retain actual source hashes, full diff
+and execution provenance; they do not infer causal credit from score changes.
+
+Active defaults, the generic Job and a new Jigsaw A/F template use GPT-6 Astra/high.
+Code, feedback and analogy use the Responses transport with complete tool/opaque
+state replay, local schema checks, streaming completion checks and safe call metadata.
+The pinned `openai==1.66.3` works through its generic JSON endpoint, so no SDK upgrade
+is required. Terminal/exhausted transport errors propagate through generation and
+the pipeline instead of repeatedly rescheduling failed requests. Preflight rejects
+stale model/effort/context overrides for the new experiment template. Historical
+Jobs, previous model routes, scoring and one-candidate-per-GPU scheduling remain intact.
+
+Validation: 140 offline tests and 20 historical improve-packet checks pass. Three
+actual SDK wrapper checks and all three corrected GPT-6 node replays pass. The first
+live pass exposed over-conservative byte counting that prevented report correction;
+measured-prefix calibration and explicit report-size feedback fixed it without
+raising the limits. Replays used 9–10 turns and produced complete 7.7–11.0K-character
+reports; one retained mechanism has abstract-only evidence despite available reading
+tools. These checks establish usable information flow, not improved task scores.
+
+Validation and live replay evidence are recorded in
+`results/9.11/gpt6_context_v2_validation/REPORT.md`. Usage, replay and rollout
+instructions: `../MLEvolve/docs/analogy_context_v2.md`. Implementation is local;
+live CPU checks use an isolated `/tmp` source copy, with no shared repository/venv
+update, experiment Job submission or Git commit/push. New GPU experiments remain
+the user's next step after Git synchronization.
+
+## 2026-09-10 — Correct candidate timing and final-result API after the S54–S56 pilot (local only)
+
+The live S54–S56 audit found seven candidates finalizing after only five optimizer
+updates: extrapolating the first smoke prediction call overestimated full validation
+by about 2.9–7.9 times. Four candidates also raised errors after publishing a result
+because generated code expected a score from `CandidateSession.finish()`, which
+returned None. Evidence is retained in
+`results/9.10/live-s54-s56-20260911_0455Z/REPORT.md`.
+
+MLEvolve now warms prediction callbacks and estimates fixed overhead separately from
+per-row cost using two sample sizes. If the provisional estimate requests premature
+finalization, the first complete validation/export cycle recalibrates the reserve;
+training resumes on the same model when the measured budget permits. Actual export
+time includes checkpoint reload and publication. The absolute deadline remains in
+force, including all preprocessing, timing, validation and export work. Validation
+intervals exclude runtime work, avoiding another full validation after one training
+update merely because the preceding export was slow. Same-update finalization reuses
+the completed validation.
+
+`finish()` now returns a stable result dictionary with the saved checkpoint's score,
+prediction paths, provenance, selected/total optimizer updates and completion reason.
+It also exposes read-only `best_validation_score` / `best_score` properties. Repeated
+finish calls do no additional inference. Generation and review share the documented
+API, including how to consume results after a budget stop. Details and return fields:
+`../MLEvolve/docs/candidate_runtime.md`.
+
+Validation: 38 candidate-runtime tests, 14 execution-pipeline tests, 4 best-result
+tests and 2 analysis-accounting tests pass (58 total). The 11 new regressions cover
+cold/fixed/noisy timing, minimum-reserve boundaries, calibration followed by resumed
+training, genuinely expensive finalization, training-only validation cadence and the
+result API. Real CPU subprocesses consume the return value after normal and budget
+exits; simulated long callbacks still save and independently verify real artifacts.
+Compilation and whitespace checks pass. GPU behavior and the unchanged 90/120-minute
+budgets still need a new pilot. Changes remain local: no cluster source, environment,
+Job or Pod was modified, and no Git commit/push was performed. The user will stop
+the current runs before synchronization.
+
+## 2026-09-10 — Early candidate validation and durable scoreable results (local only)
+
+Implemented the approved MLEvolve candidate runtime protocol. It adds execution and
+artifact state to existing search nodes, without introducing a validation node type.
+The feature defaults off; the first supported adapter is Jigsaw Unintended Bias.
+New A/F runs can opt into identical 90-minute draft and 120-minute other-candidate
+budgets. Both include validation and export; unset overrides retain the existing cap.
+
+Generated candidates use a shared runtime API: real-update smoke checks, periodic
+validation before epoch completion, checkpoint callbacks, early full-test export and
+cooperative budget finalization. Validation uses a fixed public-data split per seed
+and the corrected continuous-AUC metric, including every identity component. Budget
+reserves adapt to observed validation/inference cost rather than GPU type. The code
+reviewer checks protocol integration and conflicting epoch-only/output instructions
+are replaced when enabled. Online selection never uses private test scores.
+
+Immutable snapshots bind code, checkpoint, validation predictions/metric and complete
+test predictions. Publication is atomic; reloading a checkpoint must reproduce its
+validation predictions. A later timeout/error keeps prior verified submissions while
+the search node still routes to debug. Clean budget exits can enter improve. Final
+selection and recovery recompute metrics/check hashes independently of journal/LLM
+completion, use one snapshot per candidate, and charge the full candidate execution.
+Perfect scores await leakage review if that check is unavailable; detected leakage
+withdraws previously published results. Initial-draft feedback barriers and one
+candidate per visible GPU remain intact.
+
+Added a recovery CLI and connected post-run ensembling. Local CPU-dev-pod fetch now
+includes best outputs and compact runtime metadata, dereferencing output symlinks
+without downloading model checkpoints. Analysis adds separate execution/artifact
+counts and a wide `candidate_runtime.png`, including failed/unfinished runs and time
+to first full prediction export. Original experiment artifacts and plots are untouched.
+Implementation/activation/recovery details: `../MLEvolve/docs/candidate_runtime.md`.
+
+Validation: 27 candidate-runtime regressions, 14 execution-pipeline regressions,
+4 existing best-result regressions and 2 analysis-accounting regressions pass. Tests
+include real CPU training subprocesses, forced timeouts before/during/after export,
+corrupt checkpoints, failed writes, concurrent publication, recovery without a journal,
+debug routing, leakage-review failures, CLI recovery/ensembling, and archive contents.
+The new chart was visually checked with clearly synthetic data. Compile, shell syntax
+and whitespace checks pass. Actual GPU training and 90/120-minute budget calibration
+still require an isolated pilot. No cluster source, running experiment or task was
+updated/applied; changes remain local and no Git push was performed.
+
+## 2026-09-10 — Early draft execution and one candidate per visible GPU (local only)
+
+MLEvolve now generates initial drafts sequentially while submitting each reviewed draft
+immediately for raw subprocess execution. Parsing, grading, search-tree updates and global
+memory writes remain behind the initial-generation barrier, so later initial drafts still see
+prior designs with pending outcomes. Raw initial results are persisted under
+`logs/executions/<node_id>.json` and processed once through the existing deferred-node path.
+F's first-draft analogy, improve injection and full-text reading configuration are unchanged.
+
+Separated `agent.search.parallel_search_num` (still 3 search/LLM workers) from execution.
+New `exec.max_parallel_run: null` defaults to one candidate per visible CUDA GPU, independent
+of model/VRAM size; CPU-only defaults to one slot. Positive overrides can reduce GPU
+concurrency but cannot exceed the visible-device count. Each subprocess receives a single
+numeric/UUID/MIG device identifier through its own `CUDA_VISIBLE_DEVICES`; full slots queue
+callers in FIFO order. CPU affinity follows execution capacity, and per-node timeouts start
+after slot acquisition. Candidate process groups are cleaned up before slot reuse;
+SIGTERM at the existing outer deadline also stops active executions and queued work.
+The launch script preserves inherited CUDA visibility unless `MEMORY_INDEX` explicitly
+overrides it. GPU memory used by the agent's existing embedding model is unchanged.
+
+Validation: 14 CPU-only behavioral regressions pass using real subprocesses and mocked GPU
+discovery/LLM generation. Coverage includes execution during later draft generation, result
+isolation, first-draft-only analogy injection, step budgets, no duplicate execution, one/multiple
+device assignment, queueing, launch/runtime/timeout recovery, cancellation, descendant cleanup,
+and YAML/schema agreement. Python compilation, shell syntax and diff-whitespace checks pass.
+Hardware CUDA execution has not been tested as part of this change.
+
+Changes and tests are local only: no Git push/pull to the cluster, no shared cluster checkout
+or virtualenv edits, and no Job/Pod changes. Existing S51–S53 A/F experiments are untouched.
+Use a separate cluster checkout for new Jobs while those experiments are running.
+Implementation notes: `MLEvolve/docs/execution_pipeline.md`;
+regression command: `python utils/verify_execution_pipeline.py`.
+
+## 2026-09-09 — analogy agent: on-demand original-paper reading with evidence provenance
+
+**Problem.** The analogy loop could search papers and read abstracts, but could not inspect
+the methods, assumptions, experiments or appendices behind a suggested transfer. S48's
+sampling suggestions exposed the need to distinguish a paper's actual method from the agent's
+adaptation. The existing KB methodology extractor truncates text and produces an LLM summary;
+it is not an original-text reading interface.
+
+**Change (MLEvolve).** Added `open_paper` / `read_paper` tools behind
+`analogy.fulltext.enabled`, shared by draft and improve. They accept only paper IDs returned by
+the current search. Source resolution uses corpus PDF links, deterministic conference/arXiv
+links and publisher `citation_pdf_url` metadata, including DOI redirects and gzip pages.
+No general web search or corpus/ranking change is introduced. Original extractable text is
+cached in page/section chunks without head-only truncation; appendices remain readable.
+
+Budgets are 3 distinct opening attempts, 12 reading calls, 8,000 body characters per read and
+40,000 cumulatively per invocation, increased at the user's request. Opens have a 60-second
+deadline and a cumulative 150-second limit. The existing 10 assistant turns and 8,000-character
+report budget remain. The YAML and structured config match; defaults stay abstract-only.
+
+The report now includes source assumptions, task fit, limitations, a minimal validation/rejection
+plan and references to actual returned text. Validation rejects unread/invented quotes and
+derives PDF page/hash metadata from the reading ledger. Abstract fallback is explicitly labelled.
+The cache pins source/PDF/text hashes, reader source hash and library versions; locks, subprocess
+timeouts, atomic publication and failure backoff contain download/parse failures. Exact tool
+responses and abstracts read are saved in `logs/analogy/*.fulltext.json`, including when a later
+model request fails. The KB snapshot and replay CLI carry the feature configuration/provenance.
+
+**Runtime findings.** The AAAI S48 record's `pdf_url` is a DOI landing page, whose publisher
+response is gzip-compressed; decoding it recovers the PDF metadata. PyMuPDF4LLM's default
+layout-model backend took about 140 seconds to parse the 32-page NeurIPS paper on the dev pod.
+The reader explicitly selects its deterministic text/table mode and reads PDF bytes into memory
+before parsing. Both S48 papers then succeed within the configured deadline. OCR/figure reading
+is not part of this version; complex equations can be incomplete and the tool states that limit.
+
+**Validation.** Fifteen CPU-only regressions pass in the cluster environment, including both
+entry points, feature-off behavior, quote provenance, abstract fallback, budgets, worker timeout,
+concurrent cache publication, hash checks, gzip/DOI handling and API-failure logging. All existing
+analogy injection/config checks pass. Real-paper tests cover AAAI (9 pages), NeurIPS (32), ACL
+(19), and ICML (18); all four also pass offline with identical PDF hashes. Representative PDF
+pages were visually checked against extracted text, including methods, an appendix table and the
+last page. The OpenReview sample returns HTTP 403 from this cluster and is recorded as unavailable,
+not successful full-text reading. No model API calls, training runs or benchmark claims are made.
+
+**Deployment/record.** Candidate code was tested in an isolated directory through the dev pod;
+the approved changes are synchronized to both project checkouts with preimage checks and backups.
+The optional `requirements_fulltext.txt` pins the already-installed parser versions (1.28.0;
+tabulate 0.9.0); no shared ML packages are upgraded. Validation, deployment manifests and original
+files live under `/workspace/fulltext-validation/2026-09-09/`. Usage and experiment guidance:
+`docs/analogy_fulltext_reading.md`.
+
+## 2026-09-09 — fix jubias grading: retain continuous predictions for ROC-AUC
+
+**Symptom.** The 9/8 charts showed S48 arm E at 0.50045 versus A at 0.76990,
+despite a strong validation ranking. MLE-bench's installed jubias grader thresholded
+submission probabilities at 0.5 before calculating overall/subgroup/BPSN/BNSP AUC.
+Only 8 of E48's 97,320 predictions crossed that threshold. An independent private
+recheck gave E=0.92454747, A=0.92099580 (E−A=+0.00355166); S50's apparent positive
+effect also reversed. The old effect sizes and variance estimates were invalid.
+
+**Change (MLEvolve).** `patches/mlebench/` records a one-hunk fix against upstream
+commit `507f92e1138bb6e40dac5c6ee7a6758e6424bf97`, with original/patched SHA-256
+hashes. It removes only prediction thresholding; ground-truth thresholds, identity
+handling, ID alignment, AUC aggregation and weights are unchanged. The existing
+MLE-bench API remains the scorer. `utils/mlebench_patch.py` rejects unknown sources,
+supports idempotent application, keeps the original grader, and replaces the file
+atomically. `k8s/setup-venv.sh` pins fresh installations and applies/checks the fix
+on existing installations; jubias Job startup verifies it. `grade_all.py`,
+`grade_local.py`, and `compare_arms.py` verify grading provenance before scoring.
+CSV output now records metric version, exact grader hash, package version and
+installation commit when available; the current local-tree install has no commit
+metadata, so that field is honestly left empty.
+
+The CSV audit also exposed a pre-existing reporting bug: `grade_all.py` counted a
+grader's `None` result as success while CSV serialized it as an empty score. It now
+records `None`/nonfinite scores as failures with a reason. The eight affected
+submissions are from an older Jigsaw run and were already unscored before this fix.
+
+**Change (analysis).** `scripts/analyze_runs.py` rejects mixed metric versions or
+grader hashes within a task and rejects uncorrected/unversioned jubias scores.
+Other tasks retain legacy-file compatibility. Summaries label the corrected
+`jubias-continuous-auc-v1` metric; analogy effect figures label it too and wrap long
+titles to avoid clipping. Original 9/8 scores, analogy summary and charts
+are preserved in `results/9.8/legacy_before_auc_fix/`; the diagnosis is recorded in
+`results/9.8/s48_analogy_review.md`.
+
+**Validation/deployment.** Five CPU-only metric tests pass both against an isolated
+candidate and against the installed patch: perfect ranking below 0.5, monotone
+transforms and an independent pairwise-AUC oracle, ties/ID alignment, preserved
+ground-truth thresholds, and idempotence/unknown-source rejection. Four score-loader
+tests pass. S48 A/E private scores from the candidate match the independent recheck
+to 1e-12. Applied through the dev pod after confirming no MLEvolve training/grading
+processes were active; the pre-existing executable bit on the cluster setup script
+was preserved. Deployment records and original source backups are on the PVC under
+`/workspace/grading-artifacts/jubias-continuous-auc-v1/`.
+
+**Regrading.** Processed the same 520 submission keys across 78 runs: 512 numeric
+scores and the same eight previously unscored submissions. All 37 jubias scores
+use the corrected metric; the other 475 existing numeric scores are exactly
+unchanged. `results/9.8/scores-continuous-auc-v1.csv`, `grading_audit.json`, and
+`deployment.json` record the results and provenance. Regenerated score figures
+using the existing 9/8 inventory/groups; process figures and selection rules are
+unchanged. The initial batch log's "520 graded" line is superseded by the CSV audit
+and the follow-up regression that correctly reports the eight unscored rows.
+
+## 2026-09-07 — analogy packet: warnings out of the output tail, debug placeholder labelled
+
+**Symptom.** Reading `logs/analogy/*.md` of the 2026-09-05 jubias D runs: the packet's "Tail of
+the run output" was 18 torch FutureWarnings and nothing else. The node's stdout (epoch loss,
+final score) came before the stderr, so the 1500-char tail missed every informative line and
+the agent diagnosed a node it had seen no training signal for. Second, a debug node whose diff
+response carried no plan gets `Parent error: … | Parent analysis: …` stored as its plan
+(MLEvolve `debug_agent.py`), which the packet showed as the node's design — the OOM the node
+had just fixed read as its current bottleneck.
+
+**Change (MLEvolve `engine/analogy/agent.py`).** `strip_warnings` drops warning lines and the
+indented source echo under each before the tail is taken and appends `(N warning line(s)
+omitted)`; `describe_plan` labels the placeholder as the failure the node FIXED and points to
+the code summary; trajectory lines get a `fixed:` prefix. Applies to D and F packets (E's draft
+packet has no output). `verify_analogy_injection.py` section 8 covers both. Runs before this
+date received the old packet — note it when pooling D draws across the change.
+
+## 2026-09-06 — arm E: the analogy agent on the task, injected into the first draft
+
+**Symptom.** On jubias and tf2qa the D arm's agent almost never ran: 12 h produced 7–12 nodes,
+nearly all buggy, so there was no improve node to hook (funnel figures in results/9.5). The place
+knowledge could matter most — the first design — got none.
+
+**Change.** MLEvolve: `analogy.draft` (config + dataclass) makes `draft_agent` call
+`engine.analogy.agent.retrieve_for_draft` once per run, for the first draft only; same corpus,
+tools, validation and budget as D, `mode="draft"` swaps the prompt (structural properties of the
+TASK — metric/label/evaluation relations — instead of a node's bottleneck; interventions are
+design commitments for a simple first solution) and the report wording. `analogy.improve=False`
+turns the improve-stage injection off so E is a single-factor comparison against A. Trace:
+`logs/analogy/draft_001.md`; the draft node carries `analogy_report`. KB repo: arm E/F derivation
+(`-anad` suffix), E/F in plot_effects, `measure_adoption` judges any node with a report,
+`plot_analogy` adds `<task>_analogy_branches.png` and per-arm score figures, `inspect_analogy`
+lists the injected draft. Jobs: `job-jigsaw-unintended-ae-s{48,49,50}.yaml`, `job-essay-ae-s50.yaml`.
+Design and implementation record: `docs/analogy_draft_injection_design.md`.
+
+## 2026-09-06 — plot_analogy.py: figures for arm D only
+
+**Symptom.** `plot_effects.py` answers "did D beat A" and at n<=3 draws its interval always
+contains zero; the questions that decide the next change to the analogy agent (did it fire, is
+the retrieval cross-domain, does following a suggestion hurt) had no figure, only
+`inspect_analogy.py`'s text dump for one run.
+
+**Change.** `scripts/plot_analogy.py` reads `run_inventory.csv` and re-runs
+`analyze_runs.build_groups` on it, so it pairs D with A exactly as the main analysis does
+(borrowed baselines are hollow and excluded from the mean). Per task it writes
+`<task>_analogy_{funnel,transfer,retrieval,cost,score}.png` under `charts/analogy/` and one
+`analogy_summary.csv` row per D run. Adoption uses `measure_adoption.py`'s `adoption.csv` when
+present, else the word-overlap proxy, and the transfer figure says which. Venues are folded into
+five families (NLP/ML/Vision/AI/Other); competition vocabulary per task is `DOMAIN_WORDS`.
+
+## 2026-09-02 — Retrieval moves to the improve stage and becomes an analogy agent (arm D)
+
+Implements `docs/analogy_bm25_agent_design.md` (from Peijia's 8/31–9/1 direction, the
+structural-analogy memo and arXiv 2605.11258). Old retrieval **deleted**, not switched off — the
+change is on a branch, and `git log` keeps the code that produced every B/C result.
+
+### What changed, in one paragraph
+
+Retrieval used to happen once, at cold start, with the competition description as the query;
+arm C then re-injected that same static block at every improve node (same digest, 9 times, in
+`essay-kbimp-s47`). Now nothing is retrieved at draft time. At every improve node an agent in
+MLEvolve (`engine/analogy/`) reads the node's own search state — plan, code summary, execution
+summary, metric, output tail, sibling attempts, branch trajectory — diagnoses ≤3 bottlenecks of
+the *current methodology*, rewrites each as 3–6-term queries in the vocabulary other subfields
+use for the same relational structure, searches this repo's paper corpus with BM25, reads
+abstracts, and submits ≤3 mechanisms mapped back as concrete interventions. **The LLM does the
+analogy; BM25 does the lookup.** The corpus is `output/paper_corpus/records.jsonl` — title, tldr
+and abstract, no preprocessing, no embeddings (`scripts/6_build_paper_corpus.py`, seconds).
+
+### Why the probe number matters
+
+`scripts/probe_analogy.py` runs the memo's ten Kaggle cases as two query styles. On the local
+12.8k corpus, short mechanism-term queries hit the expected mechanism family far more often than
+the memo's structural sentences (7/10 vs 3/10 on a strict manual read; 9/10 vs 7/10 by keyword).
+That gap is why the agent prompt insists on short queries in *other* subfields' words and on
+re-wording rather than adding words. The persistent miss is test-time augmentation (Jigsaw):
+abstracts rarely name it, so the agent must reach it via "consistency regularization".
+
+### Hard rules in the code
+
+| rule | why |
+|---|---|
+| a mechanism may cite only paper ids returned by `search_papers` in that episode; others are dropped at validation | no hallucinated citations — the report is only ever as real as the corpus |
+| every failure path returns an empty report; `_inject_analogy` imports inside its try | this project's rule that a diagnostic must not be able to end a 12 h run |
+| report ≤ `analogy.report_char_budget` (8k chars), whole mechanisms only | the improve prompt is already long; the old C arm injected 48k |
+| `SearchNode.analogy_report` is a declared dataclass field | so `journal.json` carries what each node saw — `measure_adoption.py` reads it per node |
+
+### What no longer exists, and what that does to the experiments
+
+The paired-arm machinery built around *identical knowledge across arms* — `query_cache/`,
+`filter_cache/`, `prepare-task.sh`'s PROBE/WARM/VERIFY phases, `verify_filter_cache.py`,
+`dump_injected.py`, the "same digest in B and C" check — has no counterpart. The agent's input is
+the run's own trajectory, different in every run by construction, so there is nothing to share
+and nothing to race on. The comparison is A vs D, paired by draw as before.
+
+Removed: MLEvolve `engine/coldstart/methodology_agent.py`, `ondemand.py`, the methodology branch
+of `knowledge.py`, draft-time injection, `coldstart.inject_into_improve`, 23 top-level retrieval
+keys, `utils/verify_kb_injection.py`, `verify_filter_cache.py`, `dump_injected.py`; this repo's
+`6_build_abstract_index.py`, `build_retrieval_index.py`, `probe_retrieval.py` and the
+`--build-index` step. Added: MLEvolve `engine/analogy/{corpus,agent}.py`,
+`utils/verify_analogy_injection.py` (offline, ~2 s), `utils/replay_analogy.py` (re-run the agent
+on a node of an existing run), `k8s/job-essay-ad-s49.yaml`; this repo's
+`6_build_paper_corpus.py`, `probe_analogy.py`; `analyze_runs.py` derives arm D from
+`analogy.enabled` and strips `-ana`; `plot_effects.py` has a D–A contrast.
+
+### What to look at first — adoption and family hit, not score
+
+Same argument as 2026-08-26: at n=1 draw the score says nothing, but `logs/analogy/index.jsonl`
+says whether reports were produced, `logs/analogy/<parent>_<n>.md` says whether the diagnosed
+bottleneck is the one the execution summary shows and whether the queries left the competition's
+own vocabulary, and `measure_adoption.py` says whether the improve node implemented what it was
+handed. Known limitation to keep in mind when reading traces: on gpt-5.6 through
+`/v1/chat/completions`, function tools require `reasoning_effort=none`, so the agent's diagnosis
+is written as visible text rather than reasoned privately (same constraint as every other
+tool call in MLEvolve).
+
+---
+
 ## 2026-08-31 — Two ways a draw could stop being a paired comparison
 
 Both found while trying to launch tf2qa. Neither changes what the KB contains; both change

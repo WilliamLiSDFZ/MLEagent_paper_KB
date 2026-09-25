@@ -36,9 +36,60 @@ _T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8
         9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131,
         16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086, 25: 2.060, 30: 2.042}
 
-ARM_LABEL = {"A": "A  baseline", "B": "B  KB @ draft", "C": "C  KB @ draft+improve"}
-ARM_COLOR = {"A": "#555555", "B": "#1f77b4", "C": "#d62728"}
-CONTRASTS = [("B", "A"), ("C", "A"), ("C", "B")]
+ARMS = ("A", "B", "C", "D", "E", "F")
+ARM_LABEL = {"A": "A  baseline", "B": "B  KB @ draft", "C": "C  KB @ draft+improve",
+             "D": "D  analogy @ improve", "E": "E  analogy @ first draft", "F": "F  analogy @ draft+improve"}
+ARM_COLOR = {"A": "#555555", "B": "#1f77b4", "C": "#d62728", "D": "#2ca02c", "E": "#9467bd", "F": "#8c564b"}
+# B/C are the retired cold-start retrieval arms (historical runs); D/E/F are the analogy agent
+# at improve / first draft / both. Each is only ever launched against A, so no cross contrasts.
+CONTRASTS = [("B", "A"), ("C", "A"), ("C", "B"), ("D", "A"), ("E", "A"), ("F", "A")]
+
+
+def plot_candidate_runtime(runs, out: Path) -> Path:
+    """Artifact outcomes include failed/unfinished runs; these are not private test scores."""
+    fig, axes = plt.subplots(1, 2, figsize=(16, max(5.5, 0.45 * len(runs) + 2.5)),
+                             gridspec_kw={"width_ratios": [1.5, 1]}, constrained_layout=False)
+    positions = list(range(len(runs)))
+    labels = [f"{r.arm or '?'} S{r.seed} · {r.name[:15]}" for r in runs]
+    left = [0] * len(runs)
+    categories = [
+        ("runtime_completed", "Completed + result", "#2a9d8f"),
+        ("runtime_budget_stops", "Budget stop + result", "#457b9d"),
+        ("runtime_failed_with_result", "Failed + saved result", "#e9a23b"),
+        ("runtime_unfinished_with_result", "Unfinished + saved result", "#9c89b8"),
+        ("runtime_without_result", "No verified result", "#cccccc"),
+    ]
+    for field, label, color in categories:
+        counts = [getattr(r, field) for r in runs]
+        axes[0].barh(positions, counts, left=left, color=color, label=label)
+        left = [a + b for a, b in zip(left, counts)]
+    axes[0].set_yticks(positions, labels)
+    axes[0].set_ylim(len(runs) - 0.5, -0.5)
+    axes[0].set_xlabel("Candidates (one count per candidate, not per checkpoint)")
+    axes[0].set_title("Execution outcome and retained results")
+    for i, run in enumerate(runs):
+        value = run.runtime_first_result_h
+        if value is None:
+            axes[1].text(0.02, i, "Unavailable", va="center", color="#777777")
+        else:
+            axes[1].barh(i, value, color=ARM_COLOR.get(run.arm, "#555555"))
+            axes[1].annotate(f"{value:.2f} h", (value, i), xytext=(5, 0),
+                             textcoords="offset points", va="center")
+    axes[1].set_yticks(positions, labels)
+    axes[1].set_ylim(len(runs) - 0.5, -0.5)
+    axes[1].set_xlim(0, max([r.runtime_first_result_h or 0 for r in runs] + [0.1]) * 1.25)
+    axes[1].set_xlabel("Hours since run.py started")
+    axes[1].set_title("First complete prediction export")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=3, bbox_to_anchor=(0.5, 0.025))
+    fig.text(0.5, 0.015, "Includes all runtime-enabled runs. Saved results do not imply successful code execution.",
+             ha="center", fontsize=9, color="#666666")
+    fig.subplots_adjust(left=0.18, right=0.96, top=0.9, bottom=0.23, wspace=0.65)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "candidate_runtime.png"
+    fig.savefig(path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    return path
 
 
 def _t95(df: int) -> float:
@@ -91,11 +142,12 @@ def _footer(fig, task: str, n_excluded: int, extra: str = "") -> None:
 def plot_paired(task: str, draws: list[dict], k: int, lower_better: bool,
                 out: Path, n_excluded: int, legacy: bool = False) -> Path | None:
     """One line per draw across arms. Crossing lines = the effect changes sign between draws."""
-    arms = [a for a in ("A", "B", "C") if any(a in d["scores"] for d in draws)]
+    arms = [a for a in ARMS if any(a in d["scores"] for d in draws)]
     if len(arms) < 2 or not draws:
         return None
 
-    fig, ax = plt.subplots(figsize=(6.2, 4.4))
+    # Leave room for up to six arms plus the draw legend outside the data area.
+    fig, ax = plt.subplots(figsize=(max(11.0, 2.2 * len(arms)), 4.4))
     xs = range(len(arms))
     for d in draws:
         ys = [d["scores"].get(a) for a in arms]
@@ -112,17 +164,18 @@ def plot_paired(task: str, draws: list[dict], k: int, lower_better: bool,
                     mec=line.get_color(), mew=1.6, zorder=1)
 
     ax.set_xticks(list(xs))
-    ax.set_xticklabels([ARM_LABEL.get(a, a) for a in arms], fontsize=9)
+    ax.set_xticklabels([ARM_LABEL.get(a, a).replace(" @ ", "\n@ ") for a in arms],
+                       fontsize=9)
     ax.set_ylabel(f"score at K={k}  ({'lower' if lower_better else 'higher'} is better)")
     ax.set_title(f"{task} — paired by draw" + ("  [SUPERSEDED CODE]" if legacy else ""),
                  fontsize=11)
     if lower_better:
         ax.invert_yaxis()          # so "up" always means "better" on every figure
     ax.grid(axis="y", alpha=0.25)
-    ax.legend(fontsize=7.5, frameon=False, loc="best")
+    ax.legend(fontsize=7.5, frameon=False, loc="upper left", bbox_to_anchor=(1.02, 1))
     if any("A" in d.get("borrowed", set()) for d in draws):
         ax.annotate("hollow ring = baseline borrowed from another batch (unpaired)",
-                    xy=(0.5, -0.14), xycoords="axes fraction", ha="center",
+                    xy=(0.5, -0.22), xycoords="axes fraction", ha="center",
                     fontsize=7, color="#a05000")
     _footer(fig, task, n_excluded)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
@@ -154,7 +207,7 @@ def plot_effects(task: str, draws: list[dict], k: int, lower_better: bool,
     if not stats:
         return None, []
 
-    fig, ax = plt.subplots(figsize=(7.4, 0.85 * len(stats) + 1.9))
+    fig, ax = plt.subplots(figsize=(10.5, 0.85 * len(stats) + 1.9))
     for i, s in enumerate(stats):
         y = len(stats) - 1 - i
         ax.scatter(s["values"], [y] * len(s["values"]), s=42, zorder=3,
@@ -229,7 +282,7 @@ def plot_process(task: str, draws: list[dict], out: Path, n_excluded: int) -> tu
         return None, []
 
     keys = [k for k, _, _ in PROCESS_METRICS if any(s["key"] == k for s in stats)]
-    fig, axes = plt.subplots(len(keys), 1, figsize=(7.4, 2.1 * len(keys) + 1.0), squeeze=False)
+    fig, axes = plt.subplots(len(keys), 1, figsize=(10.5, 2.1 * len(keys) + 1.0), squeeze=False)
     for ax, key in zip(axes[:, 0], keys):
         rows = [s for s in stats if s["key"] == key]
         for i, s in enumerate(rows):
@@ -266,13 +319,13 @@ def plot_process(task: str, draws: list[dict], out: Path, n_excluded: int) -> tu
 def plot_vs_k(task: str, draws: list[dict], lower_better: bool,
               out: Path, n_excluded: int) -> Path | None:
     """Score against ensemble size. Flat lines mean fusion is doing nothing on this task."""
-    usable = [d for d in draws if any(d["by_k"].get(a) for a in ("A", "B", "C"))]
+    usable = [d for d in draws if any(d["by_k"].get(a) for a in ARMS)]
     if not usable:
         return None
-    fig, axes = plt.subplots(1, len(usable), figsize=(3.5 * len(usable) + 0.6, 3.4),
+    fig, axes = plt.subplots(1, len(usable), figsize=(max(10.5, 4.2 * len(usable) + 0.6), 3.4),
                              sharey=True, squeeze=False)
     for ax, d in zip(axes[0], usable):
-        for arm in ("A", "B", "C"):
+        for arm in ARMS:
             series = d["by_k"].get(arm)
             if not series:
                 continue

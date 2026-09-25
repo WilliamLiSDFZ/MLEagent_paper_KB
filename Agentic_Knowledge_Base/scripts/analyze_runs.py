@@ -173,7 +173,7 @@ TASKS: dict[str, dict[str, Any]] = {
 
 # Some early runs encoded the arm in exp_id itself ("openadmet-kb"), which would otherwise split
 # one competition into two incomparable tasks. The arm is recovered from the config regardless.
-EXP_ID_ARM_SUFFIXES = ("-kbimp", "-kbfix", "-kb", "-base")
+EXP_ID_ARM_SUFFIXES = ("-kbimp", "-kbfix", "-kb", "-anaf", "-anad", "-ana", "-base")
 
 
 # -- log patterns ----------------------------------------------------------------------
@@ -262,6 +262,18 @@ class Run:
     custom_arch_fraction: float = 0.0
     best_metric: Any = None
     maximize_used: Any = None
+    # Runtime artifacts are independent of completed search nodes (never add them to n_nodes).
+    runtime_protocol: str = ""
+    runtime_candidates: int = 0
+    runtime_completed: int = 0
+    runtime_budget_stops: int = 0
+    runtime_failed_with_result: int = 0
+    runtime_unfinished_with_result: int = 0
+    runtime_without_result: int = 0
+    runtime_scoreable: int = 0
+    runtime_first_result_h: Any = None
+    runtime_validation_h: float = 0.0
+    runtime_export_h: float = 0.0
     # outputs
     n_top_solutions: int = 0
     n_ensembles: int = 0
@@ -359,14 +371,28 @@ def parse_config(run: Run, cfg_path: Path) -> None:
     run.model = str(_dig(cfg, "agent", "code", "model") or "")
 
     cs = cfg.get("coldstart") or {}
+    # Arms B/C are the retired cold-start retrieval (read from historical runs only); D is the
+    # improve-stage analogy agent (`analogy.enabled`, 2026-09), E the same agent run once on the
+    # task and injected into the first draft only (`analogy.draft`, 2026-09-06, improve off), F
+    # both. `analogy.improve` did not exist before E, so a D-era config without it means "on".
+    # A run cannot be both old and new: the D code has no methodology_kb_path key at all, so a
+    # config carrying one is an old run.
     kb_on = bool(cfg.get("methodology_kb_path")) and run.retrieval == "lazy"
-    run.arm = "A" if not kb_on else ("C" if bool(cs.get("inject_into_improve")) else "B")
+    an = cfg.get("analogy") or {}
+    analogy_on = bool(an.get("enabled"))
+    if analogy_on:
+        at_improve = bool(an.get("improve", True))
+        at_draft = bool(an.get("draft", False))
+        run.arm = {(True, False): "D", (False, True): "E", (True, True): "F"}.get((at_improve, at_draft), "D")
+        run.retrieval = "analogy"
+    else:
+        run.arm = "A" if not kb_on else ("C" if bool(cs.get("inject_into_improve")) else "B")
 
     # `coldstart.methodology_text` was introduced by the 2026-08-08 fix that stopped retrieved
     # techniques being concatenated onto the pretrained-model guidance (which also defeated the
     # "None model" sentinel, so the arms differed by a whole extra prompt section). Its presence
     # is a structural marker of the code version — more reliable than comparing dates.
-    run.wiring = "fixed" if "methodology_text" in cs else "legacy"
+    run.wiring = "fixed" if ("methodology_text" in cs or analogy_on or "analogy" in cfg) else "legacy"
 
 
 def parse_journal(run: Run, jr: Path) -> None:
@@ -409,6 +435,36 @@ def parse_journal(run: Run, jr: Path) -> None:
     if vals:
         want_max = TASKS.get(run.exp_id, {}).get("maximize", run.maximize_used)
         run.best_metric = max(vals) if want_max else min(vals)
+
+
+def parse_candidate_results(run: Run, path: Path) -> None:
+    """Read compact CPU-recoverable metadata, including runs killed before journal writes."""
+    if not path.exists():
+        return
+    try:
+        summary = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return
+    run.runtime_protocol = summary.get("contract", {}).get("metric_version", "")
+    candidates = summary.get("candidates", [])
+    run.runtime_candidates = len(candidates)
+    start = summary.get("run", {}).get("started_at")
+    first = []
+    for candidate in candidates:
+        status = candidate.get("execution", {}).get("status", "unknown")
+        scoreable = candidate.get("artifact_status") == "scoreable"
+        run.runtime_scoreable += int(scoreable)
+        run.runtime_completed += int(scoreable and status == "completed")
+        run.runtime_budget_stops += int(scoreable and status == "budget_exhausted")
+        run.runtime_failed_with_result += int(scoreable and status in {"failed", "timeout", "protocol_error"})
+        run.runtime_unfinished_with_result += int(scoreable and status in {"running", "queued", "unknown"})
+        run.runtime_without_result += int(not scoreable)
+        if scoreable and candidate.get("first_published_at") is not None:
+            first.append(candidate["first_published_at"])
+        run.runtime_validation_h += candidate.get("validation_seconds", 0) / 3600
+        run.runtime_export_h += candidate.get("export_seconds", 0) / 3600
+    if first and start is not None:
+        run.runtime_first_result_h = max(0.0, (min(first) - start) / 3600)
 
 
 def parse_outputs(run: Run, ws: Path) -> None:
@@ -595,7 +651,7 @@ def build_groups(runs: list[Run]) -> list[Group]:
             # same number twice as if it were two independent observations, shrinking the
             # variance estimate and inventing significance.
             pool = [g.arms["A"] for g in tg if "A" in g.arms and g.arms["A"].verdict == "ok"]
-            needy = [g for g in tg if "A" not in g.arms and ({"B", "C"} & set(g.arms))]
+            needy = [g for g in tg if "A" not in g.arms and ({"B", "C", "D", "E", "F"} & set(g.arms))]
 
             # Prefer the donor whose seed matches, purely to preserve the original pairing
             # intent; seed carries no statistical meaning here (see draw_gap_hours). Anything
@@ -653,20 +709,31 @@ def load_scores(path: Path, variant: str = "capped") -> tuple[dict, dict]:
     """
     by_run: dict[str, dict[int, float]] = {}
     lower: dict[str, bool] = {}
+    provenance: dict[str, tuple[str, str]] = {}
     with path.open() as fh:
         for row in csv.DictReader(fh):
             if not row.get("score"):
                 continue
             if row.get("variant", "capped") != variant:
                 continue
-            by_run.setdefault(row["run"], {})[int(row["k"] or 0)] = float(row["score"])
             comp = row.get("competition", "")
+            identity = (row.get("metric_version") or "legacy-unversioned",
+                        row.get("grader_sha256") or "unknown")
+            if comp in provenance and provenance[comp] != identity:
+                raise ValueError(f"Mixed grading versions for {comp} in {path}: "
+                                 f"{provenance[comp]} vs {identity}; regrade consistently.")
+            provenance[comp] = identity
+            by_run.setdefault(row["run"], {})[int(row["k"] or 0)] = float(row["score"])
             short = TASKS.get(comp, {}).get("short", comp)
             if row.get("lower_better") not in (None, ""):
                 lower[short] = bool(int(row["lower_better"]))
             elif short in TASKS:
                 lower.setdefault(short, not TASKS[short.replace(short, comp)]["maximize"]
                                  if comp in TASKS else False)
+    for comp, (version, _) in provenance.items():
+        if comp == "jigsaw-unintended-bias-in-toxicity-classification" and version != "jubias-continuous-auc-v1":
+            raise ValueError(f"Uncorrected/unversioned jubias scores in {path}; use scores "
+                             "regraded with jubias-continuous-auc-v1.")
     return by_run, lower
 
 
@@ -692,6 +759,10 @@ def build_process_charts(groups: list[Group], runs: list[Run], out: Path) -> tup
 
     out.mkdir(parents=True, exist_ok=True)
     written, all_stats = [], []
+    runtime_runs = [r for r in runs if r.runtime_candidates]
+    if runtime_runs:
+        p = pe.plot_candidate_runtime(runtime_runs, out)
+        written.append(p.name)
     for task in sorted({g.task for g in groups}):
         draws = [{"label": f"draw{g.draw}",
                   "process": {a: _process_of(r) for a, r in g.arms.items()},
@@ -716,7 +787,10 @@ def build_charts(groups: list[Group], scores: dict, lower_map: dict,
                         "Scores are graded against mle-bench private answers "
                         "(`MLEvolve/utils/grade_all.py`). The agent's own validation metric is "
                         "not used anywhere here: arms hold out different data, so it is not "
-                        "comparable across arms.", ""]
+                        "comparable across arms.", "",
+                        "Jigsaw Unintended Bias uses the corrected `jubias-continuous-auc-v1` "
+                        "metric (continuous predictions). Legacy scores that thresholded "
+                        "predictions at 0.5 must not be compared with these results.", ""]
     written: list[str] = []
 
     tasks = sorted({g.task for g in groups})
@@ -836,6 +910,7 @@ def main() -> int:
         parse_log(r, d / "logs" / "MLEvolve.log")
         parse_config(r, d / "logs" / "config.yaml")
         parse_journal(r, d / "logs" / "journal.json")
+        parse_candidate_results(r, d / "logs/candidate_results/summary.json")
         parse_outputs(r, d / "workspace")
         finalise_usable(r)                 # needs both the log and the outputs
         apply_rules(r, manual)
