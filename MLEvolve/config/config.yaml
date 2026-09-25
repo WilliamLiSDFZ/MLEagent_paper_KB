@@ -1,0 +1,216 @@
+# ============================================================
+#  Data & paths
+# ============================================================
+data_dir: null
+dataset_dir: ""  # path to mle-bench dataset root, e.g. /data/mle-bench
+desc_file: null
+goal: null
+eval: null
+exp_name: null
+exp_id: ""
+
+log_dir: ./runs
+log_level: INFO
+workspace_dir: ./runs
+preprocess_data: True
+copy_data: False
+
+# Resource
+start_cpu_id: 0
+cpu_number: 21
+
+# Model paths
+torch_hub_dir: ""       # path to torch hub cache, e.g. /data/pretrain_models/torch_models
+pretrain_model_dir: ""  # path to pretrained model weights, e.g. /data/pretrain_models
+methodology_kb_path: ""       # vector/llm/static: KB with index|insight.md; lazy: methodology_kb ROOT (extraction cache tree). empty = off
+methodology_retrieval: vector # vector = insight-index retrieval | llm = LLM category match | static = methodology_map.json | lazy = abstract-index + on-demand extraction
+
+# --- lazy mode (methodology_retrieval: lazy) ---
+abstract_index_path: ""       # dir with the abstract index (records.jsonl/embeddings.npy/manifest.json)
+lazy_pool: 40                 # abstract-retrieval candidates (recall-oriented)
+lazy_min_score: 0.05          # LOW relative threshold (precision recovered at assembly)
+max_extractions_per_coldstart: 20   # cost ceiling: papers deep-extracted per cold-start
+lazy_extract_workers: 4       # concurrent PDF+LLM extractions
+lazy_technique_rerank: True   # True = 2nd-stage technique-level retrieval over extracted content | False = inject paper-level, ranked by abstract score
+                              # IGNORED when agent_paper_filter is True (the agent replaces this stage)
+# --- agent paper filter (replaces the 2nd-stage technique reranker) ---
+# Embedding similarity cannot represent "this method needs a modality the dataset does not have":
+# multimodal meme detection sits right next to text toxicity classification in embedding space.
+# jigsaw was handed CLIP encoders and meme captions for a text-only competition and adopted
+# 3 of 89 nodes. An LLM reading title+abstract against the available data can rule those out.
+agent_paper_filter: True      # False = keep the embedding-only two-stage path
+filter_min_keep: 5            # floor: if the agent keeps fewer, top up by stage-1 score (an empty
+                              # injection turns the KB arm into an expensive baseline)
+filter_max_keep: 15           # ceiling: prompt size must not depend on how strict the agent felt
+filter_batch_size: 10         # abstracts per call; one 40-paper call degrades toward the end
+retr_center_embeddings: True  # mean-center dense vectors (fixes anisotropy; validated on 2 tasks: 4->8/10 and 8->9/10 on-topic)
+retr_query_mode: llm          # llm = distil the description into a short ML-task statement (one cached LLM call) | raw = use the description as-is
+retr_query_cache_dir: ""      # where distilled queries are cached; empty = <abstract_index_path>/../query_cache
+lazy_tech_top_n: 0            # max techniques injected (rerank mode); 0 = unlimited
+lazy_tech_min_score: 0.3      # relative threshold for technique similarity (precision-oriented)
+retr_alpha: 0.5               # hybrid weight: 1.0 = pure BM25, 0.0 = pure vector
+retr_pool: 30                 # candidates fetched before selection
+retr_top_n: 10                # max insights injected
+retr_min_score: 0.15          # keep hits scoring >= this fraction of the best hit
+retr_token_budget: 25000      # approx token cap on injected guidance.
+                              # Measured over methodology_kb: 9.9 [POSITIVE] techniques per paper,
+                              # 611 chars each. 25k tokens = ~100k chars = ~15 papers' worth, which
+                              # is what filter_max_keep allows. Was 6000, which truncated.
+retr_embedding_device: cpu    # cpu | cuda (must match the index's embedding model)
+
+# ============================================================
+#  Code execution
+# ============================================================
+exec:
+  timeout: 32400
+  agent_file_name: runfile.py
+
+# ============================================================
+#  Agent config
+# ============================================================
+agent:
+
+  # --- Basic run params ---
+  steps: 500
+  time_limit: 43200          # 12h
+  initial_drafts: 3
+  seed: 42
+  data_preview: True
+
+  # --- LLM models ---
+  # Claude Opus 4.8 via Anthropic's OpenAI-compatible endpoint.
+  # NOTE: Opus 4.7+ removed sampling params — `temp` below is IGNORED for these models
+  # (llm/openai.py omits temperature/top_p entirely; sending them returns 400).
+  # Using a gateway instead (e.g. OpenRouter)? Set base_url to the gateway and model to
+  # "anthropic/claude-opus-4-8" — the provider prefix is handled.
+  # Credentials come from the ENVIRONMENT, never from this file (it is in git) and never
+  # from the command line (argv shows up in `ps` and in `set -x` logs).
+  # Set LLM_API_KEY / LLM_BASE_URL / LLM_MODEL — the k8s Secret provides them in-cluster.
+  # Defaults to OpenAI GPT-5.6 Terra (balance of intelligence and cost; `gpt-5.6-sol` is
+  # the flagship, `gpt-5.6-luna` the cheap one). GPT-5 models are reasoning models: they
+  # reject temperature/top_p/presence_penalty and require max_completion_tokens instead of
+  # max_tokens — llm/openai.py handles both automatically, so `temp` below is ignored here.
+  code:
+    model: ${oc.env:LLM_MODEL,gpt-5.6-terra}
+    temp: 1
+    base_url: ${oc.env:LLM_BASE_URL,https://api.openai.com/v1}
+    api_key: ${oc.env:LLM_API_KEY,""}
+  feedback:
+    model: ${oc.env:LLM_MODEL,gpt-5.6-terra}
+    temp: 1
+    base_url: ${oc.env:LLM_BASE_URL,https://api.openai.com/v1}
+    api_key: ${oc.env:LLM_API_KEY,""}
+
+  # --- Submission check ---
+  check_data_leakage: True
+
+  # --- Code gen mode ---
+  use_diff_mode: True                 # Multi-Mode Codegen
+  use_stepwise_generation: True       # Multi-Mode Codegen
+
+  # --- Triggered-action master switches (ablation use) ---
+  use_evolution: True                # intra-branch evolution on stagnation
+  use_fusion: True                   # cross-branch fusion on stagnation (>=6h)
+  use_aggregation: True              # multi-branch aggregation at root
+
+  # --- Branch strategy ---
+  fusion_vs_evolution_prob: 0.3
+  branch_fusion_trigger_prob: 1.0
+  max_fusion_drafts: 2
+
+  # --- Global memory ---
+  use_global_memory: True
+  memory_similarity_threshold: 0.7
+  memory_embedding_device: cuda
+  memory_embedding_model_path: "BAAI/bge-base-en-v1.5"  # HuggingFace model name or local path
+
+  # --------------------------------------------------------
+  #  Search tree params
+  # --------------------------------------------------------
+  search:
+    # Parallel & resources
+    parallel_search_num: 3
+    num_gpus: 1
+
+    # Node expansion limits
+    num_drafts: 5
+    num_bugs: 1
+    num_improves: 3
+    topk_max_improves: 10
+
+    # Debug depth
+    max_debug_depth: 20
+    back_debug_depth: 3
+    debug_prob: 1
+
+    # Improvement criteria
+    metric_improvement_threshold: 0.0001
+    max_improve_failure: 3
+
+    # Stagnation detection
+    branch_stagnation_threshold: 3
+    topk_stagnation_threshold: 6
+    stagnation_window: 4
+    top_candidates_size: 20
+
+    # Explore-exploit soft switch
+    explore_switch_start: 0.5
+    explore_switch_end: 0.7
+    min_exploration_weight: 0.2       # Top-K enabled
+
+    # Top-K node selection
+    topk_early_k: 5
+    topk_early_max_per_branch: 3
+    topk_late_k: 3
+    topk_late_max_per_branch: 2
+
+    # Force backprop
+    force_backprop_late_threshold: 0.80
+    force_backprop_late_prob: 0.5
+    force_backprop_mid_threshold: 0.4
+    force_backprop_mid_modulo: 3
+    recent_best_window: 4
+
+    # Multi-branch fusion conditions
+    fusion_min_time_hours: 6
+    fusion_max_time_hours: 10
+    fusion_min_successful_nodes: 2
+    fusion_min_branches: 2
+
+    # Stagnation detection master switch (ablation: set False for vanilla MCTS baseline)
+    use_stagnation_detection: True
+
+  # --------------------------------------------------------
+  #  Exploration constant decay
+  # --------------------------------------------------------
+  decay:
+    exploration_constant: 1.414
+    lower_bound: 0.5
+    alpha: 0.01
+    phase_ratios: [0.3, 0.7]
+
+# ============================================================
+#  Cold-start knowledge
+# ============================================================
+coldstart:
+  use_coldstart: True                 # Cold-start KB enabled
+  task_json_path: "engine/coldstart/competition_tag_classified.json"
+  model_json_path: "engine/coldstart/models_guidance_classified.json"
+  description: ""                     # runtime: pretrained-model guidance ONLY
+  # Runtime: literature techniques from the methodology KB, kept SEPARATE from
+  # `description`. They used to be appended to it, which meant draft_agent presented them
+  # inside its "Pretrained Model Strategy -> Option A [RECOMMENDED]" block, i.e. paper
+  # techniques were labelled as pretrained-model recommendations and inherited that block's
+  # "copy the Code template EXACTLY" instruction. Now each is rendered under its own heading.
+  methodology_text: ""
+  # Also show the retrieved techniques to improve_agent, not just at draft time.
+  # Rationale: the KB currently reaches only the 3 initial drafts out of 14-19 nodes per run,
+  # so its causal footprint is narrow; and improve_agent's plateau prompt already tells the
+  # model to "refer to the expert technique suggestions above" while nothing injects any.
+  # Default False: turning it on changes the KB arm, so it must be an explicit ablation.
+  inject_into_improve: False
+  improve_token_budget: 12000         # smaller than retr_token_budget used at draft, because
+                                      # this text is repeated at EVERY improve node. Was 2000,
+                                      # i.e. 8k chars — by far the tightest cap in the system and
+                                      # the one most likely to have been cutting techniques off
+                                      # mid-list.

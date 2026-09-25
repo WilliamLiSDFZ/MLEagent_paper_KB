@@ -1,0 +1,251 @@
+# jigsaw-unintended-bias-in-toxicity-classification — three-arm experiment, DRAW 44, through the shared CLIProxyAPI.
+#
+#   A  mlevolve-jubias-base-s44     no knowledge base
+#   B  mlevolve-jubias-kb-s44       KB on, draft-stage injection only
+#   C  mlevolve-jubias-kbimp-s44    KB on, draft AND improve stages
+#
+#   kubectl apply  -f k8s/job-jigsaw-unintended-abc-s44.yaml     # 3 GPUs
+#   kubectl delete -f k8s/job-jigsaw-unintended-abc-s44.yaml
+#
+# Rationale, prepare-task command and the checks are in k8s/job-jigsaw-unintended-abc.yaml — read that file.
+#
+# Third draw. Together with s42 and s43 this gives n=3 on the task where the agent paper filter
+# has a known-correct answer (the multimodal meme papers must be marked infeasible).
+#
+# Remember the primary metric here is ADOPTION, not score: jigsaw-toxic sits at 3%, and whether
+# the filter moved it is visible at n=1. Three draws is for the score contrast, which needs 8+ —
+# do not over-read it at n=3. Every earlier result in this project that cleared zero at n=3
+# stopped clearing when n rose.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlevolve-jubias-base-s44
+  labels:
+    app: mlevolve
+    experiment: jigsaw-unintended-bias
+    repeat: "9"
+    variant: kb-off
+    arm: a-baseline
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 86400     # 24 h wall clock, and it counts Pending time (see README)
+  ttlSecondsAfterFinished: 259200
+  template:
+    metadata:
+      labels:
+        app: mlevolve
+        experiment: jigsaw-unintended-bias
+        repeat: "9"
+        variant: kb-off
+        arm: a-baseline
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: mlevolve
+        image: pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+        command: ["bash", "/workspace/MLEvolve/k8s/entrypoint.sh"]
+        env:
+        - name: EXP_ID
+          value: "jigsaw-unintended-bias-in-toxicity-classification"
+        - name: DATASET_DIR
+          value: "/workspace/data/mlebench"
+        - name: REPO_DIR
+          value: "/workspace/MLEvolve"
+        - name: EXP_NAME
+          value: "jubias-base-s44"
+        - name: CPUS_PER_TASK
+          value: "8"
+        - name: SERVER_ID
+          value: "57"               # port 5062
+        - name: EXTRA_RUN_ARGS
+          value: "agent.seed=44"
+        # Route the agent through the shared proxy. These two are not secrets; the key is.
+        # `env` takes precedence over `envFrom`, so this wins over any stale mlevolve-llm value.
+        - name: LLM_BASE_URL
+          value: "http://cliproxy:8317/v1"
+        - name: LLM_MODEL
+          value: "gpt-5.6-terra"     # verified: max_completion_tokens, tools and streaming all work
+        envFrom:
+        - secretRef:
+            name: mlevolve-llm-proxy  # must provide LLM_API_KEY
+        resources:                 # identical across all three arms
+          requests:
+            cpu: "8"
+            memory: 48Gi
+            nvidia.com/gpu: 1
+          limits:
+            cpu: "8"
+            memory: 48Gi
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: yuze-li-vol
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlevolve-jubias-kb-s44
+  labels:
+    app: mlevolve
+    experiment: jigsaw-unintended-bias
+    repeat: "9"
+    variant: kb-on
+    arm: b-draft-only
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 86400     # 24 h wall clock, and it counts Pending time (see README)
+  ttlSecondsAfterFinished: 259200
+  template:
+    metadata:
+      labels:
+        app: mlevolve
+        experiment: jigsaw-unintended-bias
+        repeat: "9"
+        variant: kb-on
+        arm: b-draft-only
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: mlevolve
+        image: pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+        command: ["bash", "/workspace/MLEvolve/k8s/entrypoint.sh"]
+        env:
+        - name: EXP_ID
+          value: "jigsaw-unintended-bias-in-toxicity-classification"
+        - name: DATASET_DIR
+          value: "/workspace/data/mlebench"
+        - name: REPO_DIR
+          value: "/workspace/MLEvolve"
+        - name: EXP_NAME
+          value: "jubias-kb-s44"
+        - name: CPUS_PER_TASK
+          value: "8"
+        - name: SERVER_ID
+          value: "58"               # port 5063
+        - name: EXTRA_RUN_ARGS
+          value: >-
+            agent.seed=44
+            methodology_retrieval=lazy
+            methodology_kb_path=/workspace/Agentic_Knowledge_Base/methodology_kb
+            abstract_index_path=/workspace/Agentic_Knowledge_Base/output/abstract_index
+        # Route the agent through the shared proxy. These two are not secrets; the key is.
+        # `env` takes precedence over `envFrom`, so this wins over any stale mlevolve-llm value.
+        - name: LLM_BASE_URL
+          value: "http://cliproxy:8317/v1"
+        - name: LLM_MODEL
+          value: "gpt-5.6-terra"     # verified: max_completion_tokens, tools and streaming all work
+        envFrom:
+        - secretRef:
+            name: mlevolve-llm-proxy  # must provide LLM_API_KEY
+        resources:                 # identical across all three arms
+          requests:
+            cpu: "8"
+            memory: 48Gi
+            nvidia.com/gpu: 1
+          limits:
+            cpu: "8"
+            memory: 48Gi
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: yuze-li-vol
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlevolve-jubias-kbimp-s44
+  labels:
+    app: mlevolve
+    experiment: jigsaw-unintended-bias
+    repeat: "9"
+    variant: kb-on
+    arm: c-draft-plus-improve
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 86400     # 24 h wall clock, and it counts Pending time (see README)
+  ttlSecondsAfterFinished: 259200
+  template:
+    metadata:
+      labels:
+        app: mlevolve
+        experiment: jigsaw-unintended-bias
+        repeat: "9"
+        variant: kb-on
+        arm: c-draft-plus-improve
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: mlevolve
+        image: pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+        command: ["bash", "/workspace/MLEvolve/k8s/entrypoint.sh"]
+        env:
+        - name: EXP_ID
+          value: "jigsaw-unintended-bias-in-toxicity-classification"
+        - name: DATASET_DIR
+          value: "/workspace/data/mlebench"
+        - name: REPO_DIR
+          value: "/workspace/MLEvolve"
+        - name: EXP_NAME
+          value: "jubias-kbimp-s44"
+        - name: CPUS_PER_TASK
+          value: "8"
+        - name: SERVER_ID
+          value: "59"               # port 5064
+        - name: EXTRA_RUN_ARGS
+          value: >-
+            agent.seed=44
+            methodology_retrieval=lazy
+            methodology_kb_path=/workspace/Agentic_Knowledge_Base/methodology_kb
+            abstract_index_path=/workspace/Agentic_Knowledge_Base/output/abstract_index
+            coldstart.inject_into_improve=True
+        # Route the agent through the shared proxy. These two are not secrets; the key is.
+        # `env` takes precedence over `envFrom`, so this wins over any stale mlevolve-llm value.
+        - name: LLM_BASE_URL
+          value: "http://cliproxy:8317/v1"
+        - name: LLM_MODEL
+          value: "gpt-5.6-terra"     # verified: max_completion_tokens, tools and streaming all work
+        envFrom:
+        - secretRef:
+            name: mlevolve-llm-proxy  # must provide LLM_API_KEY
+        resources:                 # identical across all three arms
+          requests:
+            cpu: "8"
+            memory: 48Gi
+            nvidia.com/gpu: 1
+          limits:
+            cpu: "8"
+            memory: 48Gi
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: yuze-li-vol
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
