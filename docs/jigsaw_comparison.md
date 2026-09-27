@@ -1,6 +1,6 @@
 # Jigsaw：baseline / analogy 配对实验
 
-两个 Job 各运行最多 **6 小时**，自动安装基础工具，激活并检查 dev Pod 已准备的 `/workspace/autoresearch/.venv`，然后等待你进入 Pod 手动运行 `claude`。Job 不再安装 uv、执行 `uv sync` 或下载 Python/PyTorch 依赖。baseline 执行 `program.md`；analogy 执行 `program-analogy.md`，在 draft 和每次 improve 前检索，且禁止修改 analogy 代码。
+pair001–006 的两个 Job 各运行最多 **6 小时**；新 pair007 为 **baseline 6 小时、analogy 8 小时**，且两臂默认最多启动训练 10 次，具体见下文 pair007。Job 自动安装基础工具，激活并检查 dev Pod 已准备的 `/workspace/autoresearch/.venv`，然后等待你进入 Pod 手动运行 `claude`。Job 不再安装 uv、执行 `uv sync` 或下载 Python/PyTorch 依赖。baseline 执行 `program.md`；analogy 执行 `program-analogy.md`，在 draft 和每次 improve 前检索，且禁止修改 analogy 代码。
 
 ## 隔离方式与时限
 
@@ -10,7 +10,7 @@
 
 worktree 共享 Git 元数据，且两组都能访问主仓库挂载内的目录，这是工作目录隔离，并非文件访问权限隔离。program 明确禁止读取另一组或历史实验的代码、结果与报告，也禁止实验期间 commit、push、reset、切换分支或删除 worktree。
 
-两份 YAML 均设置：
+pair001–006 的 YAML 均设置：
 
 ```yaml
 activeDeadlineSeconds: 21600
@@ -19,11 +19,11 @@ backoffLimit: 0
 
 6 小时从 Job 的 `.status.startTime` 开始，**包括调度、安装依赖和等待人工进入的时间**，并非 Claude 启动后还有完整 6 小时。Kubernetes 到期终止 Pod，Job 通常显示 `Failed / DeadlineExceeded`，不会自动重跑。[Kubernetes Job 时限说明](https://kubernetes.io/docs/concepts/workloads/controllers/job/#job-termination-and-cleanup)
 
-这一轮比较相同 Job 总时限下的最佳已完成验证分数；安装或人工等待不同，会使两组实际研究时间不同。尽量同时准备、及时启动并记录时间。analogy 的额外模型用量另行记录，这不是相同 token 或 API 成本的对照。
+pair001–006 比较相同 Job 总时限下的最佳已完成验证分数；安装或人工等待不同，会使两组实际研究时间不同。尽量同时准备、及时启动并记录时间。analogy 的额外模型用量另行记录，这不是相同 token 或 API 成本的对照。
 
-**不需要守着收尾。** 六小时到期自动停止；如果整轮任务提前完成，program 要求 agent 先保存结果和 `summary.md`，最后执行 `touch /tmp/autoresearch-finished`。Job 的主进程检测到标记后以 0 退出，Job 成为 `Complete`，释放 GPU。无法继续的失败则写 `/tmp/autoresearch-failed`，以 1 退出并成为 `Failed`。普通训练失败可以继续调试，不应提前停整轮研究。
+**不需要守着收尾。** 对应 Job 时限到期自动停止；如果整轮任务提前完成，program 要求 agent 先保存结果和 `summary.md`，最后执行 `touch /tmp/autoresearch-finished`。Job 的主进程检测到标记后以 0 退出，Job 成为 `Complete`，释放 GPU。无法继续的失败则写 `/tmp/autoresearch-failed`，以 1 退出并成为 `Failed`。普通训练失败可以继续调试，不应提前停整轮研究。
 
-这两个标记只属于当前 Pod，不需要 Kubernetes API 权限。Claude 回复完一段话、关闭交互界面或结束单次训练，都不会自动等同于整轮研究完成；正常无提前终止条件时仍跑到六小时。Job/Pod 对象会保留供查看状态，结果保留在 PVC，停止运行不等于删除 Job 对象。
+这两个标记只属于当前 Pod，不需要 Kubernetes API 权限。Claude 回复完一段话、关闭交互界面或结束单次训练，都不会自动等同于整轮研究完成；达到训练次数上限或 prompt 的研究截止时，agent 应保存结果并主动结束；Job 硬截止仍独立生效。Job/Pod 对象会保留供查看状态，结果保留在 PVC，停止运行不等于删除 Job 对象。
 
 ## 1. 准备目录与配置
 
@@ -154,6 +154,30 @@ for PAIR in 004 005 006; do
     -f "k8s/job-jigsaw-pair${PAIR}-baseline.yaml" \
     -f "k8s/job-jigsaw-pair${PAIR}-analogy.yaml"
 done
+```
+
+### pair007：训练限次与独立研究期限
+
+新增 `k8s/job-jigsaw-pair007-{baseline,analogy}.yaml`：baseline 的 `activeDeadlineSeconds` 为 `21600`，analogy 为 `28800`。两份 Job 均设置 `MAX_TRAIN_CALLS: '10'`；要调整次数，在启动前同步修改两份环境变量。GPU、CPU、内存、环境和数据配置沿用 pair006。
+
+**初始化由 agent 执行。** program 要求 agent 创建 worktree、验证数据、写好 `run.json` 后，读取 `MAX_TRAIN_CALLS` 并执行一次 `run_training.py init`。之后每个候选先 snapshot，analogy 还要写 adoption，再通过 `run_training.py run` 启动；脚本保存日志并自动完成结果归档。首次训练、失败和调试重试都计次，额度用完后保存最后一次合法训练的结果并发结束标记。旧版 Job 未提供该变量，若搭配新版 program 重跑，也需在其环境中设置。
+
+你可以在两臂 prompt 中写「从现在开始，6 小时内完成实验并保存结果、释放 Pod」。agent 会记录一次研究起始 UTC 和截止时间，并将已知研究/Job 截止中的较早者传给 `init`。analogy 的 8 小时只是 Pod 硬上限，不授权研究超过 prompt 的 6 小时；baseline 可能因调度和人工等待，在研究期限之前先触及 Job 上限。次数与研究时间谁先用完就收尾，不为凑满 10 次延长实验。
+
+先由你提交并同步代码（包括 `run_training.py` 和两份 program），再启动 Job。不要在 Job 记录起始 commit 之后 pull。在挂载完整 PVC 的 dev Pod 中准备会话目录：
+
+```bash
+for ARM in baseline analogy; do
+  mkdir -p "/workspace/autoresearch-pairs/jubias-pair-007/$ARM/home"
+done
+```
+
+然后在本机仓库目录手动 apply：
+
+```bash
+kubectl --context nautilus -n ecepxie apply \
+  -f k8s/job-jigsaw-pair007-baseline.yaml \
+  -f k8s/job-jigsaw-pair007-analogy.yaml
 ```
 
 ## 2. 创建 Job，等待启动检查完成
